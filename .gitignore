@@ -1,0 +1,9 @@
+#folder
+Debug/
+.vs/
+
+#file
+*.vcxproj
+*.filters
+
+
