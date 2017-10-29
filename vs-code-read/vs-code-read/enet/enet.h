@@ -121,7 +121,7 @@ typedef enum _ENetPacketFlag
 } ENetPacketFlag;
 
 typedef void (ENET_CALLBACK * ENetPacketFreeCallback) (struct _ENetPacket *);
-  
+
 /**
  * ENet packet structure.
  *
@@ -196,7 +196,7 @@ typedef enum _ENetPeerState
    ENET_PEER_STATE_DISCONNECT_LATER            = 6,
    ENET_PEER_STATE_DISCONNECTING               = 7,
    ENET_PEER_STATE_ACKNOWLEDGING_DISCONNECT    = 8,
-   ENET_PEER_STATE_ZOMBIE                      = 9 //僵尸状态
+   ENET_PEER_STATE_ZOMBIE                      = 9 
 } ENetPeerState;
 
 #ifndef ENET_BUFFER_MAXIMUM

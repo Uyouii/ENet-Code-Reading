@@ -29,6 +29,7 @@ ENetHost* createClient() {
 
 int main(int argc, char ** argv)
 {
+
 	if (enet_initialize() != 0)
 	{
 		printf("An error occurred while initializing ENet.\n");
