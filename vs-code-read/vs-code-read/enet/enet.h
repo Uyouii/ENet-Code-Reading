@@ -1,4 +1,4 @@
-/** 
+﻿/** 
  @file  enet.h
  @brief ENet public header file
 */
@@ -373,7 +373,7 @@ typedef struct _ENetHost
    size_t               commandCount;
    ENetBuffer           buffers [ENET_BUFFER_MAXIMUM];
    size_t               bufferCount;
-   ENetChecksumCallback checksum;                    /**< callback the user can set to enable packet checksums for this host */
+   ENetChecksumCallback checksum;                    /**<回调函数指针 callback the user can set to enable packet checksums for this host */
    ENetCompressor       compressor;
    enet_uint8           packetData [2][ENET_PROTOCOL_MAXIMUM_MTU];
    ENetAddress          receivedAddress;
@@ -383,7 +383,7 @@ typedef struct _ENetHost
    enet_uint32          totalSentPackets;            /**< total UDP packets sent, user should reset to 0 as needed to prevent overflow */
    enet_uint32          totalReceivedData;           /**< total data received, user should reset to 0 as needed to prevent overflow */
    enet_uint32          totalReceivedPackets;        /**< total UDP packets received, user should reset to 0 as needed to prevent overflow */
-   ENetInterceptCallback intercept;                  /**< callback the user can set to intercept received raw UDP packets */
+   ENetInterceptCallback intercept;                  /**< 回调函数指针 callback the user can set to intercept received raw UDP packets */
    size_t               connectedPeers;
    size_t               bandwidthLimitedPeers;
    size_t               duplicatePeers;              /**< optional number of allowed peers from duplicate IPs, defaults to ENET_PROTOCOL_MAXIMUM_PEER_ID */

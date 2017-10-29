@@ -1,4 +1,4 @@
-/** 
+﻿/** 
  @file  protocol.h
  @brief ENet protocol
 */
@@ -57,7 +57,7 @@ typedef enum _ENetProtocolFlag
 #pragma pack(push, 1)
 #define ENET_PACKED
 #elif defined(__GNUC__) || defined(__clang__)
-#define ENET_PACKED __attribute__ ((packed))
+#define ENET_PACKED __attribute__ ((packed)) //gcc语法特点，告诉编译器取消结构在编译过程中的优化对齐
 #else
 #define ENET_PACKED
 #endif

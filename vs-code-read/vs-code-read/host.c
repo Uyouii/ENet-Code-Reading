@@ -1,4 +1,4 @@
-/** 
+﻿/** 
  @file host.c
  @brief ENet host management functions
 */
@@ -26,7 +26,7 @@
     at any given time.
 */
 ENetHost *
-enet_host_create (const ENetAddress * address, size_t peerCount, size_t channelLimit, enet_uint32 incomingBandwidth, enet_uint32 outgoingBandwidth)
+enet_host_create (const ENetAddress * address, size_t peerCount,	size_t channelLimit, enet_uint32 incomingBandwidth, enet_uint32 outgoingBandwidth)
 {
     ENetHost * host;
     ENetPeer * currentPeer;
@@ -39,6 +39,7 @@ enet_host_create (const ENetAddress * address, size_t peerCount, size_t channelL
       return NULL;
     memset (host, 0, sizeof (ENetHost));
 
+	//根据peercount的大小初始化数组大小
     host -> peers = (ENetPeer *) enet_malloc (peerCount * sizeof (ENetPeer));
     if (host -> peers == NULL)
     {
@@ -112,6 +113,7 @@ enet_host_create (const ENetAddress * address, size_t peerCount, size_t channelL
 
     enet_list_clear (& host -> dispatchQueue);
 
+	//初始化peers数组的信息
     for (currentPeer = host -> peers;
          currentPeer < & host -> peers [host -> peerCount];
          ++ currentPeer)
