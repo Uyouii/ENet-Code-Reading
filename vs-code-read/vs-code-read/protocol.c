@@ -1,4 +1,4 @@
-/** 
+﻿/** 
  @file  protocol.c
  @brief ENet protocol functions
 */
@@ -56,17 +56,28 @@ enet_protocol_dispatch_state (ENetHost * host, ENetPeer * peer, ENetPeerState st
     }
 }
 
+//检查该host有无需要处理的事件，如果不存在需要处理的事件则返回0，否则处理后返回1
+//从host->dispatchQueue中弹出一个peer，
+//如果peer状态为等待或者连接成功，则将其状态改为已经连接，事件类型定义为连接，并返回1
+//如果peer状态为无响应，则将事件类型定义为断开连接，并将peer重置
+//如果peer状态为已连接，则检测该peer有无发送的packet，如果无发送的packet，则进行下一个循环
+//如果有发送的packet，则从peer的packcet的队列中弹出一个packet，放在event->packet中，并将事件类型定义为接收包
+//如果仍有需要发送的packet，则将peer压入host事件处理队列的尾部
+//
+//如果是其他状态，则继续检测下一个peer的状态时候符合上述条件
 static int
 enet_protocol_dispatch_incoming_commands (ENetHost * host, ENetEvent * event)
 {
     while (! enet_list_empty (& host -> dispatchQueue))
     {
-       ENetPeer * peer = (ENetPeer *) enet_list_remove (enet_list_begin (& host -> dispatchQueue));
+	   //ENetPeer结构中的第一个元素是ENetListNode，所以可以将其指针赋给ENetListNode并调用其中元素
+	   ENetPeer * peer = (ENetPeer *) enet_list_remove (enet_list_begin (& host -> dispatchQueue));
 
        peer -> needsDispatch = 0;
 
        switch (peer -> state)
        {
+	   //等待连接或者连接成功，host、peer状态变为已经连接，事件类型为连接
        case ENET_PEER_STATE_CONNECTION_PENDING:
        case ENET_PEER_STATE_CONNECTION_SUCCEEDED:
            enet_protocol_change_state (host, peer, ENET_PEER_STATE_CONNECTED);
@@ -76,9 +87,9 @@ enet_protocol_dispatch_incoming_commands (ENetHost * host, ENetEvent * event)
            event -> data = peer -> eventData;
 
            return 1;
-           
+       //如果peer的状态为无响应，则事件类型为断开连接，并将peer重置
        case ENET_PEER_STATE_ZOMBIE:
-           host -> recalculateBandwidthLimits = 1;
+           host -> recalculateBandwidthLimits = 1; //？
 
            event -> type = ENET_EVENT_TYPE_DISCONNECT;
            event -> peer = peer;
@@ -87,7 +98,8 @@ enet_protocol_dispatch_incoming_commands (ENetHost * host, ENetEvent * event)
            enet_peer_reset (peer);
 
            return 1;
-
+	   //如果状态是已经连接，则收取其发送过来的packet
+	   //如果收到则返回1，否则接着进行while循环
        case ENET_PEER_STATE_CONNECTED:
            if (enet_list_empty (& peer -> dispatchedCommands))
              continue;
@@ -99,6 +111,7 @@ enet_protocol_dispatch_incoming_commands (ENetHost * host, ENetEvent * event)
            event -> type = ENET_EVENT_TYPE_RECEIVE;
            event -> peer = peer;
 
+		   //如果还有需要处理的数据包，则将该peer插入host处理队列的尾部，并将peer->needsDispatch置为1
            if (! enet_list_empty (& peer -> dispatchedCommands))
            {
               peer -> needsDispatch = 1;
