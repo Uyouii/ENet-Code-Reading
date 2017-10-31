@@ -330,7 +330,7 @@ void
 enet_host_bandwidth_throttle (ENetHost * host)
 {
     enet_uint32 timeCurrent = enet_time_get (),
-           elapsedTime = timeCurrent - host -> bandwidthThrottleEpoch,
+           elapsedTime = timeCurrent - host -> bandwidthThrottleEpoch,//距离上次流量控制的时间
            peersRemaining = (enet_uint32) host -> connectedPeers,
            dataTotal = ~0,
            bandwidth = ~0,
@@ -342,7 +342,7 @@ enet_host_bandwidth_throttle (ENetHost * host)
 
     if (elapsedTime < ENET_HOST_BANDWIDTH_THROTTLE_INTERVAL)
       return;
-
+	//重置做流量控制的时间
     host -> bandwidthThrottleEpoch = timeCurrent;
 
     if (peersRemaining == 0)
@@ -350,8 +350,10 @@ enet_host_bandwidth_throttle (ENetHost * host)
 
     if (host -> outgoingBandwidth != 0)
     {
-        dataTotal = 0;
-        bandwidth = (host -> outgoingBandwidth * elapsedTime) / 1000;
+        dataTotal = 0;	//peer 的 outgoing data的总和
+
+		//在全带宽时，在间隔时间内传输的数据量
+        bandwidth = (host -> outgoingBandwidth * elapsedTime) / 1000; 
 
         for (peer = host -> peers;
              peer < & host -> peers [host -> peerCount];
@@ -364,10 +366,12 @@ enet_host_bandwidth_throttle (ENetHost * host)
         }
     }
 
+	//调节peer -> packetThrottleLimit 和 peer -> packetThrottle
     while (peersRemaining > 0 && needsAdjustment != 0)
     {
         needsAdjustment = 0;
         
+		//throttle = SCALE * bandwidth / (peer)dataTotal，最大是32
         if (dataTotal <= bandwidth)
           throttle = ENET_PEER_PACKET_THROTTLE_SCALE;
         else
@@ -378,27 +382,37 @@ enet_host_bandwidth_throttle (ENetHost * host)
              ++ peer)
         {
             enet_uint32 peerBandwidth;
-            
-            if ((peer -> state != ENET_PEER_STATE_CONNECTED && peer -> state != ENET_PEER_STATE_DISCONNECT_LATER) ||
-                peer -> incomingBandwidth == 0 ||
-                peer -> outgoingBandwidthThrottleEpoch == timeCurrent)
+   
+            if ((peer -> state != ENET_PEER_STATE_CONNECTED && 
+				peer -> state != ENET_PEER_STATE_DISCONNECT_LATER) ||	//peer是连接状态
+                peer -> incomingBandwidth == 0 ||						//允许接收数据
+                peer -> outgoingBandwidthThrottleEpoch == timeCurrent)	//不是刚刚调节过
               continue;
 
-            peerBandwidth = (peer -> incomingBandwidth * elapsedTime) / 1000;
+            peerBandwidth = (peer -> incomingBandwidth * elapsedTime) / 1000;	//peer在间隔时间内能接收的最大数据
+			
+			//如果 （in coming)peerBandwith / peer->outgoingDataTotal >= bandwith / (peer)dataTotal
+			//如果此peer的接收数据的能力/发送数据的量 大于平均水平时，则暂时不调节
             if ((throttle * peer -> outgoingDataTotal) / ENET_PEER_PACKET_THROTTLE_SCALE <= peerBandwidth)
               continue;
 
+			//如果低于平均水平，则将peer->packetThrottleLimit重新计算
+			//否则则按照throttle计算
             peer -> packetThrottleLimit = (peerBandwidth * 
                                             ENET_PEER_PACKET_THROTTLE_SCALE) / peer -> outgoingDataTotal;
             
+			//packThrottleLimit最小值为1
             if (peer -> packetThrottleLimit == 0)
               peer -> packetThrottleLimit = 1;
             
+			//设置packetThrottle
             if (peer -> packetThrottle > peer -> packetThrottleLimit)
               peer -> packetThrottle = peer -> packetThrottleLimit;
 
+			//设置调节的时间
             peer -> outgoingBandwidthThrottleEpoch = timeCurrent;
 
+			//调节过后重置发送接收数据总量
             peer -> incomingDataTotal = 0;
             peer -> outgoingDataTotal = 0;
 
@@ -409,6 +423,8 @@ enet_host_bandwidth_throttle (ENetHost * host)
         }
     }
 
+	//调节incomingBandwidth为0的peer的throttle
+	//以及上面没有调节的大于平均水平的peer，将其throttle设置为throttle
     if (peersRemaining > 0)
     {
         if (dataTotal <= bandwidth)
@@ -420,7 +436,8 @@ enet_host_bandwidth_throttle (ENetHost * host)
              peer < & host -> peers [host -> peerCount];
              ++ peer)
         {
-            if ((peer -> state != ENET_PEER_STATE_CONNECTED && peer -> state != ENET_PEER_STATE_DISCONNECT_LATER) ||
+            if ((peer -> state != ENET_PEER_STATE_CONNECTED && 
+				peer -> state != ENET_PEER_STATE_DISCONNECT_LATER) ||
                 peer -> outgoingBandwidthThrottleEpoch == timeCurrent)
               continue;
 
@@ -434,6 +451,7 @@ enet_host_bandwidth_throttle (ENetHost * host)
         }
     }
 
+	//如果需要重新计算带宽限制
     if (host -> recalculateBandwidthLimits)
     {
        host -> recalculateBandwidthLimits = 0;
@@ -448,20 +466,22 @@ enet_host_bandwidth_throttle (ENetHost * host)
        while (peersRemaining > 0 && needsAdjustment != 0)
        {
            needsAdjustment = 0;
+		   //取平均数，会随着循环增大
            bandwidthLimit = bandwidth / peersRemaining;
 
            for (peer = host -> peers;
                 peer < & host -> peers [host -> peerCount];
                 ++ peer)
            {
-               if ((peer -> state != ENET_PEER_STATE_CONNECTED && peer -> state != ENET_PEER_STATE_DISCONNECT_LATER) ||
-                   peer -> incomingBandwidthThrottleEpoch == timeCurrent)
+               if ((peer -> state != ENET_PEER_STATE_CONNECTED && 
+				   peer -> state != ENET_PEER_STATE_DISCONNECT_LATER) ||	//是已经连接的peer
+                   peer -> incomingBandwidthThrottleEpoch == timeCurrent)	//之前没有处理过
                  continue;
 
                if (peer -> outgoingBandwidth > 0 &&
                    peer -> outgoingBandwidth >= bandwidthLimit)
                  continue;
-
+			   //将outgoingBandwidth小于平均水平的peer标记出来
                peer -> incomingBandwidthThrottleEpoch = timeCurrent;
  
                needsAdjustment = 1;
@@ -481,11 +501,14 @@ enet_host_bandwidth_throttle (ENetHost * host)
            command.header.channelID = 0xFF;
            command.bandwidthLimit.outgoingBandwidth = ENET_HOST_TO_NET_32 (host -> outgoingBandwidth);
 
+		   //如果之前标记过，即小于平均水平的peer
            if (peer -> incomingBandwidthThrottleEpoch == timeCurrent)
-             command.bandwidthLimit.incomingBandwidth = ENET_HOST_TO_NET_32 (peer -> outgoingBandwidth);
+			 command.bandwidthLimit.incomingBandwidth = ENET_HOST_TO_NET_32 (peer -> outgoingBandwidth);
            else
+			 //没处理过的统一设置为 bandwidthlimit
              command.bandwidthLimit.incomingBandwidth = ENET_HOST_TO_NET_32 (bandwidthLimit);
 
+		   //给peer设置一个command
            enet_peer_queue_outgoing_command (peer, & command, NULL, 0, 0);
        } 
     }

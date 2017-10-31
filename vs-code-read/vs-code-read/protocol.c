@@ -103,7 +103,7 @@ enet_protocol_dispatch_incoming_commands (ENetHost * host, ENetEvent * event)
        case ENET_PEER_STATE_CONNECTED:
            if (enet_list_empty (& peer -> dispatchedCommands))
              continue;
-
+		   //设置包的同时修改event的channelID
            event -> packet = enet_peer_receive (peer, & event -> channelID);
            if (event -> packet == NULL)
              continue;
@@ -1808,6 +1808,7 @@ enet_host_service (ENetHost * host, ENetEvent * event, enet_uint32 timeout)
         event -> peer = NULL;
         event -> packet = NULL;
 
+		//检测此时host中有无待处理的事件
         switch (enet_protocol_dispatch_incoming_commands (host, event))
         {
         case 1:
@@ -1824,13 +1825,15 @@ enet_host_service (ENetHost * host, ENetEvent * event, enet_uint32 timeout)
             break;
         }
     }
-
+	//设置服务器此时的时间
     host -> serviceTime = enet_time_get ();
     
     timeout += host -> serviceTime;
 
     do
     {
+	   //距离上次做流量控制经过的时间大于1秒，则进行流量控制
+		//host -> recalculateBandwidthLimits？
        if (ENET_TIME_DIFFERENCE (host -> serviceTime, host -> bandwidthThrottleEpoch) >= ENET_HOST_BANDWIDTH_THROTTLE_INTERVAL)
          enet_host_bandwidth_throttle (host);
 
