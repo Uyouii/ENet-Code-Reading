@@ -149,6 +149,7 @@ enet_protocol_notify_connect (ENetHost * host, ENetPeer * peer, ENetEvent * even
 static void
 enet_protocol_notify_disconnect (ENetHost * host, ENetPeer * peer, ENetEvent * event)
 {
+	//需要重新计算带宽
     if (peer -> state >= ENET_PEER_STATE_CONNECTION_PENDING)
        host -> recalculateBandwidthLimits = 1;
 
@@ -1282,6 +1283,7 @@ enet_protocol_send_acknowledgements (ENetHost * host, ENetPeer * peer)
          
     while (currentAcknowledgement != enet_list_end (& peer -> acknowledgements))
     {
+		//如果还有位置
        if (command >= & host -> commands [sizeof (host -> commands) / sizeof (ENetProtocol)] ||
            buffer >= & host -> buffers [sizeof (host -> buffers) / sizeof (ENetBuffer)] ||
            peer -> mtu - host -> packetSize < sizeof (ENetProtocolAcknowledge))
@@ -1308,6 +1310,7 @@ enet_protocol_send_acknowledgements (ENetHost * host, ENetPeer * peer)
        command -> acknowledge.receivedReliableSequenceNumber = reliableSequenceNumber;
        command -> acknowledge.receivedSentTime = ENET_HOST_TO_NET_16 (acknowledgement -> sentTime);
   
+	   //如果是断开连接的确认，将peer状态改为ZOMBIE
        if ((acknowledgement -> command.header.command & ENET_PROTOCOL_COMMAND_MASK) == ENET_PROTOCOL_COMMAND_DISCONNECT)
          enet_protocol_dispatch_state (host, peer, ENET_PEER_STATE_ZOMBIE);
 
@@ -1423,6 +1426,10 @@ enet_protocol_send_unreliable_outgoing_commands (ENetHost * host, ENetPeer * pee
       enet_peer_disconnect (peer, peer -> eventData);
 }
 
+//检测peer的连接是否超时
+//如果peer断开连接，需要重新设置host的bandwidth控制
+//如果peer出现了command 丢包的情况，则将该command的roundTripTimeout增加一倍，
+//并将该command重新加入peer的发送队列
 static int
 enet_protocol_check_timeouts (ENetHost * host, ENetPeer * peer, ENetEvent * event)
 {
@@ -1438,43 +1445,57 @@ enet_protocol_check_timeouts (ENetHost * host, ENetPeer * peer, ENetEvent * even
 
        currentCommand = enet_list_next (currentCommand);
 
+	   //检测命令是否超时
        if (ENET_TIME_DIFFERENCE (host -> serviceTime, outgoingCommand -> sentTime) < outgoingCommand -> roundTripTimeout)
          continue;
 
+	   //重置peer最早的超时的时间
        if (peer -> earliestTimeout == 0 ||
            ENET_TIME_LESS (outgoingCommand -> sentTime, peer -> earliestTimeout))
          peer -> earliestTimeout = outgoingCommand -> sentTime;
+
 
        if (peer -> earliestTimeout != 0 &&
              (ENET_TIME_DIFFERENCE (host -> serviceTime, peer -> earliestTimeout) >= peer -> timeoutMaximum ||
                (outgoingCommand -> roundTripTimeout >= outgoingCommand -> roundTripTimeoutLimit &&
                  ENET_TIME_DIFFERENCE (host -> serviceTime, peer -> earliestTimeout) >= peer -> timeoutMinimum)))
        {
+		  //设置断开连接事件
+		   //一个peer断开连接后需要重新计算带宽
           enet_protocol_notify_disconnect (host, peer, event);
 
           return 1;
        }
 
+	   //丢包
        if (outgoingCommand -> packet != NULL)
          peer -> reliableDataInTransit -= outgoingCommand -> fragmentLength;
           
        ++ peer -> packetsLost;
 
+	   //该command的roundTripTimeout的超时检测时间增加1倍
        outgoingCommand -> roundTripTimeout *= 2;
-
+	   //重新把这个命令插入到发送队列（重发）
        enet_list_insert (insertPosition, enet_list_remove (& outgoingCommand -> outgoingCommandList));
 
        if (currentCommand == enet_list_begin (& peer -> sentReliableCommands) &&
            ! enet_list_empty (& peer -> sentReliableCommands))
        {
           outgoingCommand = (ENetOutgoingCommand *) currentCommand;
-
+		  //下次丢包的截至时间
           peer -> nextTimeout = outgoingCommand -> sentTime + outgoingCommand -> roundTripTimeout;
        }
     }
     
     return 0;
 }
+
+//发送reliable outgoing commands
+//如果发送的数据没有超过发送窗口的大小的限制或者host的commands和buffer没有超过限制
+//则将该command从从outgoingReliableCommands转移到sentReliableCommands
+//并设置该command的roundTripTimeout
+//并将要发送的command和command中的packet存放到host的buffer中
+//如果存在可以发送的command，则返回1，否则返回0
 
 static int
 enet_protocol_send_reliable_outgoing_commands (ENetHost * host, ENetPeer * peer)
@@ -1498,6 +1519,7 @@ enet_protocol_send_reliable_outgoing_commands (ENetHost * host, ENetPeer * peer)
        reliableWindow = outgoingCommand -> reliableSequenceNumber / ENET_PEER_RELIABLE_WINDOW_SIZE;
        if (channel != NULL)
        {
+		   //？
            if (! windowWrap &&      
                outgoingCommand -> sendAttempts < 1 && 
                ! (outgoingCommand -> reliableSequenceNumber % ENET_PEER_RELIABLE_WINDOW_SIZE) &&
@@ -1512,11 +1534,13 @@ enet_protocol_send_reliable_outgoing_commands (ENetHost * host, ENetPeer * peer)
              continue;
           }
        }
- 
+	   
+	   //要发送数据的大小超过了总的发送窗口大小的限制
        if (outgoingCommand -> packet != NULL)
        {
           if (! windowExceeded)
           {
+			 //packetThrottle原来是用来计算windowSize的
              enet_uint32 windowSize = (peer -> packetThrottle * peer -> windowSize) / ENET_PEER_PACKET_THROTTLE_SCALE;
              
              if (peer -> reliableDataInTransit + outgoingCommand -> fragmentLength > ENET_MAX (windowSize, peer -> mtu))
@@ -1531,12 +1555,13 @@ enet_protocol_send_reliable_outgoing_commands (ENetHost * host, ENetPeer * peer)
        }
 
        canPing = 0;
-
+	   
+	   //host需要发送的数据满了，跳出循环
        commandSize = commandSizes [outgoingCommand -> command.header.command & ENET_PROTOCOL_COMMAND_MASK];
-       if (command >= & host -> commands [sizeof (host -> commands) / sizeof (ENetProtocol)] ||
-           buffer + 1 >= & host -> buffers [sizeof (host -> buffers) / sizeof (ENetBuffer)] ||
-           peer -> mtu - host -> packetSize < commandSize ||
-           (outgoingCommand -> packet != NULL && 
+       if (command >= & host -> commands [sizeof (host -> commands) / sizeof (ENetProtocol)] ||	//host的command满了
+           buffer + 1 >= & host -> buffers [sizeof (host -> buffers) / sizeof (ENetBuffer)] ||	//host的buffer满了
+           peer -> mtu - host -> packetSize < commandSize ||	//commandSize的大小超过限制了
+           (outgoingCommand -> packet != NULL &&				
              (enet_uint16) (peer -> mtu - host -> packetSize) < (enet_uint16) (commandSize + outgoingCommand -> fragmentLength)))
        {
           host -> continueSending = 1;
@@ -1546,6 +1571,7 @@ enet_protocol_send_reliable_outgoing_commands (ENetHost * host, ENetPeer * peer)
 
        currentCommand = enet_list_next (currentCommand);
 
+	   //如果之前没有发送过，即没有占用channel，将该channel标记为占用
        if (channel != NULL && outgoingCommand -> sendAttempts < 1)
        {
           channel -> usedReliableWindows |= 1 << reliableWindow;
@@ -1553,21 +1579,25 @@ enet_protocol_send_reliable_outgoing_commands (ENetHost * host, ENetPeer * peer)
        }
 
        ++ outgoingCommand -> sendAttempts;
- 
+	   
+	   //设置该command的roundTripTimeout
        if (outgoingCommand -> roundTripTimeout == 0)
        {
           outgoingCommand -> roundTripTimeout = peer -> roundTripTime + 4 * peer -> roundTripTimeVariance;
           outgoingCommand -> roundTripTimeoutLimit = peer -> timeoutLimit * outgoingCommand -> roundTripTimeout;
        }
 
+	   //如果之前发送队列中没有命令，则设置超时时间
        if (enet_list_empty (& peer -> sentReliableCommands))
          peer -> nextTimeout = host -> serviceTime + outgoingCommand -> roundTripTimeout;
 
+	   //将该command从outgoing队列放到sent队列
        enet_list_insert (enet_list_end (& peer -> sentReliableCommands),
                          enet_list_remove (& outgoingCommand -> outgoingCommandList));
 
        outgoingCommand -> sentTime = host -> serviceTime;
 
+	   //把buffer的指针指向command
        buffer -> data = command;
        buffer -> dataLength = commandSize;
 
@@ -1575,7 +1605,8 @@ enet_protocol_send_reliable_outgoing_commands (ENetHost * host, ENetPeer * peer)
        host -> headerFlags |= ENET_PROTOCOL_HEADER_FLAG_SENT_TIME;
 
        * command = outgoingCommand -> command;
-
+	   
+	   //如果command需要发送packet，则将packet存到buffer中
        if (outgoingCommand -> packet != NULL)
        {
           ++ buffer;
@@ -1611,12 +1642,14 @@ enet_protocol_send_outgoing_commands (ENetHost * host, ENetEvent * event, int ch
  
     host -> continueSending = 1;
 
+	//循环遍历和host相连的每个peer
     while (host -> continueSending)
     for (host -> continueSending = 0,
            currentPeer = host -> peers;
          currentPeer < & host -> peers [host -> peerCount];
          ++ currentPeer)
     {
+		//如果不是断开连接或者准备断开连接
         if (currentPeer -> state == ENET_PEER_STATE_DISCONNECTED ||
             currentPeer -> state == ENET_PEER_STATE_ZOMBIE)
           continue;
@@ -1626,12 +1659,15 @@ enet_protocol_send_outgoing_commands (ENetHost * host, ENetEvent * event, int ch
         host -> bufferCount = 1;
         host -> packetSize = sizeof (ENetProtocolHeader);
 
+		//处理确认队列
+		//如果是断开连接的确认则需要特殊处理
         if (! enet_list_empty (& currentPeer -> acknowledgements))
           enet_protocol_send_acknowledgements (host, currentPeer);
 
         if (checkForTimeouts != 0 &&
             ! enet_list_empty (& currentPeer -> sentReliableCommands) &&
             ENET_TIME_GREATER_EQUAL (host -> serviceTime, currentPeer -> nextTimeout) &&
+			//检测peer的连接超时和丢包，如果连接超时返回1，丢包则重新发送该包
             enet_protocol_check_timeouts (host, currentPeer, event) == 1)
         {
             if (event != NULL && event -> type != ENET_EVENT_TYPE_NONE)
@@ -1641,13 +1677,13 @@ enet_protocol_send_outgoing_commands (ENetHost * host, ENetEvent * event, int ch
         }
 
         if ((enet_list_empty (& currentPeer -> outgoingReliableCommands) ||
-              enet_protocol_send_reliable_outgoing_commands (host, currentPeer)) &&
-            enet_list_empty (& currentPeer -> sentReliableCommands) &&
-            ENET_TIME_DIFFERENCE (host -> serviceTime, currentPeer -> lastReceiveTime) >= currentPeer -> pingInterval &&
-            currentPeer -> mtu - host -> packetSize >= sizeof (ENetProtocolPing))
+              enet_protocol_send_reliable_outgoing_commands (host, currentPeer)) && //尝试将outging中的command转移到sent中
+            enet_list_empty (& currentPeer -> sentReliableCommands) &&				//转移后sent还是空的
+            ENET_TIME_DIFFERENCE (host -> serviceTime, currentPeer -> lastReceiveTime) >= currentPeer -> pingInterval && //距离上次接收包的时间 > pingInterval
+            currentPeer -> mtu - host -> packetSize >= sizeof (ENetProtocolPing))	//还有空间ping一下
         { 
-            enet_peer_ping (currentPeer);
-            enet_protocol_send_reliable_outgoing_commands (host, currentPeer);
+            enet_peer_ping (currentPeer);	//将ping的包放在outgoing command下
+            enet_protocol_send_reliable_outgoing_commands (host, currentPeer);	//将outgoing command下的command放到sent队列下
         }
                       
         if (! enet_list_empty (& currentPeer -> outgoingUnreliableCommands))

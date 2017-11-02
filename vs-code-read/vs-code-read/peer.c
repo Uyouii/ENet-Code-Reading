@@ -1,4 +1,4 @@
-/** 
+﻿/** 
  @file  peer.c
  @brief ENet peer management functions
 */
@@ -672,7 +672,7 @@ enet_peer_setup_outgoing_command (ENetPeer * peer, ENetOutgoingCommand * outgoin
     default:
         break;
     }
-
+	//将command添加到peer的command处理队列中
     if (outgoingCommand -> command.header.command & ENET_PROTOCOL_COMMAND_FLAG_ACKNOWLEDGE)
       enet_list_insert (enet_list_end (& peer -> outgoingReliableCommands), outgoingCommand);
     else

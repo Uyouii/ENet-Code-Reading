@@ -124,7 +124,7 @@ peer -> outgoingBandwidth >= bandwidthLimit)
 peer -> incomingBandwidthThrottleEpoch = timeCurrent;
 ```
 
-为每个已连接的peer设置command。
+设置command发送给已连接的peer。
 
 将`outgoingBandwidth`设置为`host -> outgoingBandwidth`
 如果之前标记过的，即`peer -> outgoingBandwidth`小于bandwidthLimit的peer将`incomingBandwidth`设置为`peer->outgoingBandwith`
@@ -142,3 +142,54 @@ else
 //给peer设置一个command
 enet_peer_queue_outgoing_command (peer, & command, NULL, 0, 0);
 ```
+调用`enet_peer_queue_outgoing_command`将command添加到peer的command处理队列中。
+
+
+## 检测peer连接超时或者丢包
+
+函数：
+```c
+static int
+enet_protocol_check_timeouts (ENetHost * host, ENetPeer * peer, ENetEvent * event)
+```
+
+位置：`protocol.c`
+
+遍历该peer的`sentReliableCommands`，如果发现该command已经发送的时间超过`roundTripTimeout`，则将该命令的`roundTripTimeout`增加一倍，并将该command插入到发送队列重新发送。
+
+如果该command的`roundTripTimeout`超过`roundTripTimeoutLimit`并且该command的已经发送的时间超过认为丢包的最小的时间限制，则认为该peer已经断开连接，则调用
+```c
+//一个peer断开连接后需要重新计算带宽
+enet_protocol_notify_disconnect (host, peer, event);
+```
+并将event设定为断开连接事件，并返回1。
+在`enet_protocol_notify_disconnect`中将`host -> recalculateBandwidthLimits`置为1，即当一个peer断开连接后需要重新计算和分配host的带宽。
+
+
+## 发送reliable outging command
+函数：
+```c
+static int
+enet_protocol_send_reliable_outgoing_commands (ENetHost * host, ENetPeer * peer)
+```
+
+文件位置：`protocol.c`
+
+向peer发送`peer->outgoingReliableCommands`中的数据。
+
+如果发送的数据没有超过发送窗口的大小的限制或者host的commands和buffer没有超过限制，则将该command从从`outgoingReliableCommands`队列转移到`sentReliableCommands`队列，并设置该command的`roundTripTimeout`，标记该command占用的channel的usedReliableWindows，并将要发送的command和command中的packet存放到host的buffer中。
+
+如果peer中存在可以发送的command，则返回1，否则返回0。
+
+
+
+
+<br>
+<br>
+<br>
+
+
+
+> 问题：<br>
+> 2. command中incomingBandwidth和outgoingBandwidth的含义？<br>
+> 3. peer和host怎么处理queue中的command的

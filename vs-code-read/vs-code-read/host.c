@@ -497,8 +497,9 @@ enet_host_bandwidth_throttle (ENetHost * host)
            if (peer -> state != ENET_PEER_STATE_CONNECTED && peer -> state != ENET_PEER_STATE_DISCONNECT_LATER)
              continue;
 
+		   //发送给peer的command
            command.header.command = ENET_PROTOCOL_COMMAND_BANDWIDTH_LIMIT | ENET_PROTOCOL_COMMAND_FLAG_ACKNOWLEDGE;
-           command.header.channelID = 0xFF;
+           command.header.channelID = 0xFF;	//标记响应channel(realiable)
            command.bandwidthLimit.outgoingBandwidth = ENET_HOST_TO_NET_32 (host -> outgoingBandwidth);
 
 		   //如果之前标记过，即小于平均水平的peer
@@ -508,10 +509,11 @@ enet_host_bandwidth_throttle (ENetHost * host)
 			 //没处理过的统一设置为 bandwidthlimit
              command.bandwidthLimit.incomingBandwidth = ENET_HOST_TO_NET_32 (bandwidthLimit);
 
-		   //给peer设置一个command
+		   //设置发送给peer的command，并将该command添加到peer的command处理队列中
            enet_peer_queue_outgoing_command (peer, & command, NULL, 0, 0);
        } 
     }
 }
+//throttle用法？command命令的设置
     
 /** @} */
