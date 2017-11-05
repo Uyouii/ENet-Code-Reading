@@ -6,7 +6,7 @@ ENet官网地址：<http://enet.bespin.org/index.html>
 
 文件夹`enet-1.3.13 source code`是ENet的开源代码
 
-文件夹`vs-code-read`是在visual studio下进行的源码阅读(= =，便于快速了解各个宏定义和结构的定义和用法)
+**文件夹`vs-code-read`是在visual studio下进行的源码阅读**(= =，便于快速了解各个宏定义和结构的定义和用法)
 
 # ENet特性
 

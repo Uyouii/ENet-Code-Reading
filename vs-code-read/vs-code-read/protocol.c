@@ -172,6 +172,7 @@ enet_protocol_notify_disconnect (ENetHost * host, ENetPeer * peer, ENetEvent * e
     }
 }
 
+//清空sent unrliable command中的数据
 static void
 enet_protocol_remove_sent_unreliable_commands (ENetPeer * peer)
 {
@@ -1342,6 +1343,8 @@ enet_protocol_send_unreliable_outgoing_commands (ENetHost * host, ENetPeer * pee
        outgoingCommand = (ENetOutgoingCommand *) currentCommand;
        commandSize = commandSizes [outgoingCommand -> command.header.command & ENET_PROTOCOL_COMMAND_MASK];
 
+	   //如果host的command和buffer有足够的位置发送该command
+	   //且command和packet总的大小不超过peer->mtu
        if (command >= & host -> commands [sizeof (host -> commands) / sizeof (ENetProtocol)] ||
            buffer + 1 >= & host -> buffers [sizeof (host -> buffers) / sizeof (ENetBuffer)] ||
            peer -> mtu - host -> packetSize < commandSize ||
@@ -1355,6 +1358,7 @@ enet_protocol_send_unreliable_outgoing_commands (ENetHost * host, ENetPeer * pee
 
        currentCommand = enet_list_next (currentCommand);
 
+	   //删除一些command？
        if (outgoingCommand -> packet != NULL && outgoingCommand -> fragmentOffset == 0)
        {
           peer -> packetThrottleCounter += ENET_PEER_PACKET_THROTTLE_COUNTER;
@@ -1407,6 +1411,7 @@ enet_protocol_send_unreliable_outgoing_commands (ENetHost * host, ENetPeer * pee
 
           host -> packetSize += buffer -> dataLength;
 
+		  //发送有packet需要发送时，才将其放到sent队列中
           enet_list_insert (enet_list_end (& peer -> sentUnreliableCommands), outgoingCommand);
        }
        else
@@ -1419,6 +1424,7 @@ enet_protocol_send_unreliable_outgoing_commands (ENetHost * host, ENetPeer * pee
     host -> commandCount = command - host -> commands;
     host -> bufferCount = buffer - host -> buffers;
 
+	//如果需要断开连接则断开连接
     if (peer -> state == ENET_PEER_STATE_DISCONNECT_LATER && 
         enet_list_empty (& peer -> outgoingReliableCommands) &&
         enet_list_empty (& peer -> outgoingUnreliableCommands) && 
@@ -1631,6 +1637,9 @@ enet_protocol_send_reliable_outgoing_commands (ENetHost * host, ENetPeer * peer)
     return canPing;
 }
 
+//循环将与host相连的所有peer中的outgoing command发送出去
+//包括reliable command 和 unreliable command。
+
 static int
 enet_protocol_send_outgoing_commands (ENetHost * host, ENetEvent * event, int checkForTimeouts)
 {
@@ -1642,7 +1651,7 @@ enet_protocol_send_outgoing_commands (ENetHost * host, ENetEvent * event, int ch
  
     host -> continueSending = 1;
 
-	//循环遍历和host相连的每个peer
+	//循环遍历和host相连的每个peer，因为有些peer的包一次buffer发送不完
     while (host -> continueSending)
     for (host -> continueSending = 0,
            currentPeer = host -> peers;
@@ -1656,7 +1665,7 @@ enet_protocol_send_outgoing_commands (ENetHost * host, ENetEvent * event, int ch
 
         host -> headerFlags = 0;
         host -> commandCount = 0;
-        host -> bufferCount = 1;
+        host -> bufferCount = 1;	//第一个buffer是用来存header的信息的
         host -> packetSize = sizeof (ENetProtocolHeader);
 
 		//处理确认队列
@@ -1686,6 +1695,7 @@ enet_protocol_send_outgoing_commands (ENetHost * host, ENetEvent * event, int ch
             enet_protocol_send_reliable_outgoing_commands (host, currentPeer);	//将outgoing command下的command放到sent队列下
         }
                       
+		//发送outgoing unreliable command
         if (! enet_list_empty (& currentPeer -> outgoingUnreliableCommands))
           enet_protocol_send_unreliable_outgoing_commands (host, currentPeer);
 
@@ -1722,6 +1732,7 @@ enet_protocol_send_outgoing_commands (ENetHost * host, ENetEvent * event, int ch
            currentPeer -> packetsLost = 0;
         }
 
+		//设置host的header
         host -> buffers -> data = headerData;
         if (host -> headerFlags & ENET_PROTOCOL_HEADER_FLAG_SENT_TIME)
         {
@@ -1730,9 +1741,11 @@ enet_protocol_send_outgoing_commands (ENetHost * host, ENetEvent * event, int ch
             host -> buffers -> dataLength = sizeof (ENetProtocolHeader);
         }
         else
+		  //获取sentTime的偏移量！！！
           host -> buffers -> dataLength = (size_t) & ((ENetProtocolHeader *) 0) -> sentTime;
 
         shouldCompress = 0;
+		//如果host传入了compross的函数指针，则进行压缩
         if (host -> compressor.context != NULL && host -> compressor.compress != NULL)
         {
             size_t originalSize = host -> packetSize - sizeof(ENetProtocolHeader),
@@ -1741,6 +1754,7 @@ enet_protocol_send_outgoing_commands (ENetHost * host, ENetEvent * event, int ch
                                         originalSize,
                                         host -> packetData [1],
                                         originalSize);
+			//如果可以压缩，则压缩buffer中的数据
             if (compressedSize > 0 && compressedSize < originalSize)
             {
                 host -> headerFlags |= ENET_PROTOCOL_HEADER_FLAG_COMPRESSED;
@@ -1754,6 +1768,8 @@ enet_protocol_send_outgoing_commands (ENetHost * host, ENetEvent * event, int ch
         if (currentPeer -> outgoingPeerID < ENET_PROTOCOL_MAXIMUM_PEER_ID)
           host -> headerFlags |= currentPeer -> outgoingSessionID << ENET_PROTOCOL_HEADER_SESSION_SHIFT;
         header -> peerID = ENET_HOST_TO_NET_16 (currentPeer -> outgoingPeerID | host -> headerFlags);
+
+		//设置header的checksum
         if (host -> checksum != NULL)
         {
             enet_uint32 * checksum = (enet_uint32 *) & headerData [host -> buffers -> dataLength];
@@ -1762,6 +1778,7 @@ enet_protocol_send_outgoing_commands (ENetHost * host, ENetEvent * event, int ch
             * checksum = host -> checksum (host -> buffers, host -> bufferCount);
         }
 
+		//如果需要压缩且已经压缩过，则将压缩后的数据存入buffer
         if (shouldCompress > 0)
         {
             host -> buffers [1].data = host -> packetData [1];
@@ -1771,8 +1788,10 @@ enet_protocol_send_outgoing_commands (ENetHost * host, ENetEvent * event, int ch
 
         currentPeer -> lastSendTime = host -> serviceTime;
 
+		//将host的buffer中的数据发送出去
         sentLength = enet_socket_send (host -> socket, & currentPeer -> address, host -> buffers, host -> bufferCount);
 
+		//清空sent unrliable command中的数据
         enet_protocol_remove_sent_unreliable_commands (currentPeer);
 
         if (sentLength < 0)

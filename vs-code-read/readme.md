@@ -175,12 +175,51 @@ enet_protocol_send_reliable_outgoing_commands (ENetHost * host, ENetPeer * peer)
 
 文件位置：`protocol.c`
 
-向peer发送`peer->outgoingReliableCommands`中的数据。
+向peer发送`peer->outgoingReliableCommands`中的command。
 
-如果发送的数据没有超过发送窗口的大小的限制或者host的commands和buffer没有超过限制，则将该command从从`outgoingReliableCommands`队列转移到`sentReliableCommands`队列，并设置该command的`roundTripTimeout`，标记该command占用的channel的usedReliableWindows，并将要发送的command和command中的packet存放到host的buffer中。
+如果发送的数据没有超过发送窗口的大小的限制或者host的commands和buffer没有超过限制，则将该command从`outgoingReliableCommands`队列转移到`sentReliableCommands`队列，并设置该command的`roundTripTimeout`，标记该command占用的channel的usedReliableWindows，并将要发送的command和command中的packet存放到host的buffer中。
 
 如果peer中存在可以发送的command，则返回1，否则返回0。
 
+## 发送unreliable outgoing command
+
+函数：
+```c
+static void
+enet_protocol_send_unreliable_outgoing_commands (ENetHost * host, ENetPeer * peer)
+```
+
+文件位置：`protocol.c`
+
+向peer发送`peer -> outgoingUnreliableCommands`中的command。
+
+如果发送的数据没有超过发送窗口的大小的限制或者host的commands和buffer没有超过限制，则将该command从放置到host的command和buffer中。如果该command带有packet，则将该command转移到sent队列中，否则直接释放该command。
+
+>❓ 发送前的一些排除操作不是很理解。
+
+## 发送outgoing command
+
+函数：
+```c
+static int
+enet_protocol_send_outgoing_commands (ENetHost * host, ENetEvent * event, int checkForTimeouts)
+```
+
+文件位置：`procotol.c`
+
+循环将与host相连的所有peer中的outgoing command发送出去，包括reliable command和unreliable command。
+
+首先调用`enet_protocol_send_acknowledgements (host, currentPeer)`处理确认队列(`currentPeer -> acknowledgements`)，如果是断开连接的请求则需要特殊处理
+
+随后调用`enet_protocol_check_timeouts (host, currentPeer, event)`检测是否存在连接超时或者丢包的情况，如果丢包则重发该包，如果连接超时则返回1。
+
+随后调用`enet_protocol_send_reliable_outgoing_commands (host, currentPeer)`将尝试将reliable outging command转移到sent中,如果转移之后sent队列还是空的，并且距离上次ping 该peer的时间间隔大于时间间隔限制，则调用`enet_peer_ping (currentPeer)`将ping的command放在outgoing
+ command队列中，再次调用`enet_protocol_send_reliable_outgoing_commands`将outgoing command中的command放在sent队列和host的buffer中。
+
+ 调用`enet_protocol_send_unreliable_outgoing_commands (host, currentPeer)`发送unreliable commmand
+
+ 随后在host的buffer[0]的位置设置发送的header和校验和，并检测要发送的buffer中的数据是否有压缩的空间，如果有压缩的空间则进行压缩后再发送。随后将本次循环中hostbuffer中的数据发送出去，更新host的totalsentdata和totalsentpackets。
+
 
 
 
@@ -190,6 +229,9 @@ enet_protocol_send_reliable_outgoing_commands (ENetHost * host, ENetPeer * peer)
 
 
 
-> 问题：<br>
+> ❓ 问题：<br>
 > 2. command中incomingBandwidth和outgoingBandwidth的含义？<br>
-> 3. peer和host怎么处理queue中的command的
+> 3. peer和host怎么处理queue中的command的<br>
+> 4. peer -> packetThrottleCounter<br>
+> 5. host中的buffer和command的作用<br>
+> 6. 压缩算法是怎么压缩的<br>
