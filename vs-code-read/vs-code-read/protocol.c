@@ -132,6 +132,7 @@ enet_protocol_dispatch_incoming_commands (ENetHost * host, ENetEvent * event)
 static void
 enet_protocol_notify_connect (ENetHost * host, ENetPeer * peer, ENetEvent * event)
 {
+	//需要重新计算带宽
     host -> recalculateBandwidthLimits = 1;
 
     if (event != NULL)
@@ -200,6 +201,7 @@ enet_protocol_remove_sent_unreliable_commands (ENetPeer * peer)
     }
 }
 
+//从sentReliableCommands队列中确认之前发送的command
 static ENetProtocolCommand
 enet_protocol_remove_sent_reliable_command (ENetPeer * peer, enet_uint16 reliableSequenceNumber, enet_uint8 channelID)
 {
@@ -219,6 +221,7 @@ enet_protocol_remove_sent_reliable_command (ENetPeer * peer, enet_uint16 reliabl
          break;
     }
 
+	//检测是否收到了之前超时之后发送的command
     if (currentCommand == enet_list_end (& peer -> sentReliableCommands))
     {
        for (currentCommand = enet_list_begin (& peer -> outgoingReliableCommands);
@@ -247,6 +250,7 @@ enet_protocol_remove_sent_reliable_command (ENetPeer * peer, enet_uint16 reliabl
     {
        ENetChannel * channel = & peer -> channels [channelID];
        enet_uint16 reliableWindow = reliableSequenceNumber / ENET_PEER_RELIABLE_WINDOW_SIZE;
+	   //将其占用的相应的窗口移除
        if (channel -> reliableWindows [reliableWindow] > 0)
        {
           -- channel -> reliableWindows [reliableWindow];
@@ -257,6 +261,7 @@ enet_protocol_remove_sent_reliable_command (ENetPeer * peer, enet_uint16 reliabl
 
     commandNumber = (ENetProtocolCommand) (outgoingCommand -> command.header.command & ENET_PROTOCOL_COMMAND_MASK);
     
+	//从相应的队列中移除这个command
     enet_list_remove (& outgoingCommand -> outgoingCommandList);
 
     if (outgoingCommand -> packet != NULL)
@@ -279,13 +284,16 @@ enet_protocol_remove_sent_reliable_command (ENetPeer * peer, enet_uint16 reliabl
     if (enet_list_empty (& peer -> sentReliableCommands))
       return commandNumber;
     
+	//设置发送队列的下次包的超时时间
     outgoingCommand = (ENetOutgoingCommand *) enet_list_front (& peer -> sentReliableCommands);
     
     peer -> nextTimeout = outgoingCommand -> sentTime + outgoingCommand -> roundTripTimeout;
 
+	//返回相应的command number
     return commandNumber;
 } 
 
+//处理连接请求，如果连接成功则将连接确认的command移动到outgoing队列
 static ENetPeer *
 enet_protocol_handle_connect (ENetHost * host, ENetProtocolHeader * header, ENetProtocol * command)
 {
@@ -306,6 +314,7 @@ enet_protocol_handle_connect (ENetHost * host, ENetProtocolHeader * header, ENet
          currentPeer < & host -> peers [host -> peerCount];
          ++ currentPeer)
     {
+		//找到第一个已经断开连接的或者没有分配的位置
         if (currentPeer -> state == ENET_PEER_STATE_DISCONNECTED)
         {
             if (peer == NULL)
@@ -431,6 +440,7 @@ enet_protocol_handle_connect (ENetHost * host, ENetProtocolHeader * header, ENet
     verifyCommand.verifyConnect.packetThrottleDeceleration = ENET_HOST_TO_NET_32 (peer -> packetThrottleDeceleration);
     verifyCommand.verifyConnect.connectID = peer -> connectID;
 
+	//发送连接确认的command
     enet_peer_queue_outgoing_command (peer, & verifyCommand, NULL, 0, 0);
 
     return peer;
@@ -815,6 +825,7 @@ enet_protocol_handle_disconnect (ENetHost * host, ENetPeer * peer, const ENetPro
     if (peer -> state == ENET_PEER_STATE_DISCONNECTED || peer -> state == ENET_PEER_STATE_ZOMBIE || peer -> state == ENET_PEER_STATE_ACKNOWLEDGING_DISCONNECT)
       return 0;
 
+	//清空peer的各种队列
     enet_peer_reset_queues (peer);
 
     if (peer -> state == ENET_PEER_STATE_CONNECTION_SUCCEEDED || peer -> state == ENET_PEER_STATE_DISCONNECTING || peer -> state == ENET_PEER_STATE_CONNECTING)
@@ -838,6 +849,7 @@ enet_protocol_handle_disconnect (ENetHost * host, ENetPeer * peer, const ENetPro
     return 0;
 }
 
+//处理确认请求
 static int
 enet_protocol_handle_acknowledge (ENetHost * host, ENetEvent * event, ENetPeer * peer, const ENetProtocol * command)
 {
@@ -845,23 +857,23 @@ enet_protocol_handle_acknowledge (ENetHost * host, ENetEvent * event, ENetPeer *
            receivedSentTime,
            receivedReliableSequenceNumber;
     ENetProtocolCommand commandNumber;
-
+	//如果断开连接或者准备断开连接，则不处理
     if (peer -> state == ENET_PEER_STATE_DISCONNECTED || peer -> state == ENET_PEER_STATE_ZOMBIE)
       return 0;
 
     receivedSentTime = ENET_NET_TO_HOST_16 (command -> acknowledge.receivedSentTime);
     receivedSentTime |= host -> serviceTime & 0xFFFF0000;
-    if ((receivedSentTime & 0x8000) > (host -> serviceTime & 0x8000))
+    if ((receivedSentTime & 0x8000) > (host -> serviceTime & 0x8000))	//？
         receivedSentTime -= 0x10000;
-
+	
     if (ENET_TIME_LESS (host -> serviceTime, receivedSentTime))
       return 0;
 
     peer -> lastReceiveTime = host -> serviceTime;
     peer -> earliestTimeout = 0;
-
+	//command的传输时间
     roundTripTime = ENET_TIME_DIFFERENCE (host -> serviceTime, receivedSentTime);
-
+	//根据roundTripTime调节throttle
     enet_peer_throttle (peer, roundTripTime);
 
     peer -> roundTripTimeVariance -= peer -> roundTripTimeVariance / 4;
@@ -883,6 +895,7 @@ enet_protocol_handle_acknowledge (ENetHost * host, ENetEvent * event, ENetPeer *
     if (peer -> roundTripTimeVariance > peer -> highestRoundTripTimeVariance) 
       peer -> highestRoundTripTimeVariance = peer -> roundTripTimeVariance;
 
+	//如果之前没有进行过流量控制，或者流量控制的时间间隔超过一定的时间
     if (peer -> packetThrottleEpoch == 0 ||
         ENET_TIME_DIFFERENCE (host -> serviceTime, peer -> packetThrottleEpoch) >= peer -> packetThrottleInterval)
     {
@@ -938,6 +951,7 @@ enet_protocol_handle_verify_connect (ENetHost * host, ENetEvent * event, ENetPee
 
     channelCount = ENET_NET_TO_HOST_32 (command -> verifyConnect.channelCount);
 
+	//如果信息对不上= =。
     if (channelCount < ENET_PROTOCOL_MINIMUM_CHANNEL_COUNT || channelCount > ENET_PROTOCOL_MAXIMUM_CHANNEL_COUNT ||
         ENET_NET_TO_HOST_32 (command -> verifyConnect.packetThrottleInterval) != peer -> packetThrottleInterval ||
         ENET_NET_TO_HOST_32 (command -> verifyConnect.packetThrottleAcceleration) != peer -> packetThrottleAcceleration ||
@@ -1017,12 +1031,15 @@ enet_protocol_handle_incoming_commands (ENetHost * host, ENetEvent * event)
     if (peerID == ENET_PROTOCOL_MAXIMUM_PEER_ID)
       peer = NULL;
     else
+	//接收到的command不是当前的peer发送的
     if (peerID >= host -> peerCount)
       return 0;
     else
     {
        peer = & host -> peers [peerID];
 
+	   //如果peer已经断开连接或者准备断开连接
+	   //或者地址和peerID信息不匹配，则返回0
        if (peer -> state == ENET_PEER_STATE_DISCONNECTED ||
            peer -> state == ENET_PEER_STATE_ZOMBIE ||
            ((host -> receivedAddress.host != peer -> address.host ||
@@ -1033,6 +1050,7 @@ enet_protocol_handle_incoming_commands (ENetHost * host, ENetEvent * event)
          return 0;
     }
  
+	//如果这个packcet之前被压缩过，则进行解压缩
     if (flags & ENET_PROTOCOL_HEADER_FLAG_COMPRESSED)
     {
         size_t originalSize;
@@ -1052,6 +1070,7 @@ enet_protocol_handle_incoming_commands (ENetHost * host, ENetEvent * event)
         host -> receivedDataLength = headerSize + originalSize;
     }
 
+	//检测校验和是否合法
     if (host -> checksum != NULL)
     {
         enet_uint32 * checksum = (enet_uint32 *) & host -> receivedData [headerSize - sizeof (enet_uint32)],
@@ -1096,6 +1115,7 @@ enet_protocol_handle_incoming_commands (ENetHost * host, ENetEvent * event)
 
        currentData += commandSize;
 
+	   //如果peer不存在且不是连接的command，则跳出循环
        if (peer == NULL && commandNumber != ENET_PROTOCOL_COMMAND_CONNECT)
          break;
          
@@ -1107,7 +1127,8 @@ enet_protocol_handle_incoming_commands (ENetHost * host, ENetEvent * event)
           if (enet_protocol_handle_acknowledge (host, event, peer, command))
             goto commandError;
           break;
-
+	   
+	   //处理连接请求
        case ENET_PROTOCOL_COMMAND_CONNECT:
           if (peer != NULL)
             goto commandError;
@@ -1117,10 +1138,11 @@ enet_protocol_handle_incoming_commands (ENetHost * host, ENetEvent * event)
           break;
 
        case ENET_PROTOCOL_COMMAND_VERIFY_CONNECT:
+		  //收到连接请求方返回验证连接请求
           if (enet_protocol_handle_verify_connect (host, event, peer, command))
             goto commandError;
           break;
-
+	   
        case ENET_PROTOCOL_COMMAND_DISCONNECT:
           if (enet_protocol_handle_disconnect (host, peer, command))
             goto commandError;
@@ -1224,10 +1246,10 @@ enet_protocol_receive_incoming_commands (ENetHost * host, ENetEvent * event)
                                              & host -> receivedAddress,
                                              & buffer,
                                              1);
-
+	   //接收错误
        if (receivedLength < 0)
          return -1;
-
+	   //没有接收到数据
        if (receivedLength == 0)
          return 0;
 
@@ -1239,6 +1261,7 @@ enet_protocol_receive_incoming_commands (ENetHost * host, ENetEvent * event)
 
        if (host -> intercept != NULL)
        {
+		  //不知道是哪个回调函数？
           switch (host -> intercept (host, event))
           {
           case 1:
@@ -1435,6 +1458,7 @@ enet_protocol_send_unreliable_outgoing_commands (ENetHost * host, ENetPeer * pee
 //检测peer的连接是否超时
 //如果peer断开连接，需要重新设置host的bandwidth控制
 //如果peer出现了command 丢包的情况，则将该command的roundTripTimeout增加一倍，
+//并将响应的command从sent队列重新转移到outgoing comand队列的头部
 //并将该command重新加入peer的发送队列
 static int
 enet_protocol_check_timeouts (ENetHost * host, ENetPeer * peer, ENetEvent * event)
@@ -1892,6 +1916,8 @@ enet_host_service (ENetHost * host, ENetEvent * event, enet_uint32 timeout)
        if (ENET_TIME_DIFFERENCE (host -> serviceTime, host -> bandwidthThrottleEpoch) >= ENET_HOST_BANDWIDTH_THROTTLE_INTERVAL)
          enet_host_bandwidth_throttle (host);
 
+	   //如果遇到event，则返回
+	   //将与host相连的peer中的所有outgoingcommand发送出去
        switch (enet_protocol_send_outgoing_commands (host, event, 1))
        {
        case 1:
@@ -1907,7 +1933,7 @@ enet_host_service (ENetHost * host, ENetEvent * event, enet_uint32 timeout)
        default:
           break;
        }
-
+	   //接收command
        switch (enet_protocol_receive_incoming_commands (host, event))
        {
        case 1:

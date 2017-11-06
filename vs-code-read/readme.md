@@ -110,6 +110,8 @@ if (peer -> packetThrottle > peer -> packetThrottleLimit)
 
 ### 重新计算带宽限制
 
+在有新的peer连接或者peer断开连接时，则需要重新计算带宽限制。
+
 bandwidth为host的`host -> incomingBandwidth`,即host接收数据的能力
 带宽限制取其平均数
 ```c
@@ -155,7 +157,7 @@ enet_protocol_check_timeouts (ENetHost * host, ENetPeer * peer, ENetEvent * even
 
 位置：`protocol.c`
 
-遍历该peer的`sentReliableCommands`，如果发现该command已经发送的时间超过`roundTripTimeout`，则将该命令的`roundTripTimeout`增加一倍，并将该command插入到发送队列重新发送。
+遍历该peer的`sentReliableCommands`，如果发现该command已经发送的时间超过`roundTripTimeout`，则将该命令的`roundTripTimeout`增加一倍，并将相应的command从sent队列重新转移到outgoing comand队列的头部。
 
 如果该command的`roundTripTimeout`超过`roundTripTimeoutLimit`并且该command的已经发送的时间超过认为丢包的最小的时间限制，则认为该peer已经断开连接，则调用
 ```c
@@ -213,13 +215,66 @@ enet_protocol_send_outgoing_commands (ENetHost * host, ENetEvent * event, int ch
 
 随后调用`enet_protocol_check_timeouts (host, currentPeer, event)`检测是否存在连接超时或者丢包的情况，如果丢包则重发该包，如果连接超时则返回1。
 
-随后调用`enet_protocol_send_reliable_outgoing_commands (host, currentPeer)`将尝试将reliable outging command转移到sent中,如果转移之后sent队列还是空的，并且距离上次ping 该peer的时间间隔大于时间间隔限制，则调用`enet_peer_ping (currentPeer)`将ping的command放在outgoing
+随后调用[`enet_protocol_send_reliable_outgoing_commands (host, currentPeer)`]()将尝试将reliable outging command转移到sent中,如果转移之后sent队列还是空的，并且距离上次ping 该peer的时间间隔大于时间间隔限制，则调用`enet_peer_ping (currentPeer)`将ping的command放在outgoing
  command队列中，再次调用`enet_protocol_send_reliable_outgoing_commands`将outgoing command中的command放在sent队列和host的buffer中。
 
  调用`enet_protocol_send_unreliable_outgoing_commands (host, currentPeer)`发送unreliable commmand
 
  随后在host的buffer[0]的位置设置发送的header和校验和，并检测要发送的buffer中的数据是否有压缩的空间，如果有压缩的空间则进行压缩后再发送。随后将本次循环中hostbuffer中的数据发送出去，更新host的totalsentdata和totalsentpackets。
 
+## 根据roundtriptime调节peer throttle
+
+函数：
+```c
+int
+enet_peer_throttle (ENetPeer * peer, enet_uint32 rtt)
+```
+
+文件位置：`peer.c`
+
+rtt为这次packet的roundtriptime。
+
+如果上次的传输时间非常短
+```c
+peer -> lastRoundTripTime <= peer -> lastRoundTripTimeVariance
+```
+则将`peer -> packetThrottle`调节到最大值(`peer -> packetThrottleLimit`)。
+
+如果这次的传输速度比上次快，
+```c
+rtt < peer -> lastRoundTripTime
+```
+则将`peer->packetThrottle`增加响应的值(`peer -> packetThrottleAcceleration`)
+
+如果这次的传输时间比较慢
+```c
+rtt > peer -> lastRoundTripTime + 2 * peer -> lastRoundTripTimeVariance
+```
+则将`peer -> packetThrottle`减少响应的值(`peer -> packetThrottleDeceleration`)
+
+## 确认接收realiable command
+
+函数：
+```c
+static ENetProtocolCommand
+enet_protocol_remove_sent_reliable_command (ENetPeer * peer, enet_uint16 reliableSequenceNumber, enet_uint8 channelID)
+```
+
+文件位置：`protocol.c`
+
+从sentReliableCommands队列中确认之前发送的command。
+
+首先遍历该peer的`sentReliableCommands`，如果没有找到相应的command，则遍历该peer的`outgoingReliableCommands`(有可能之前发送该command超时后将该command从sent队列转移回了outgoing队列。
+
+如果没有找到该command则返回`ENET_PROTOCOL_COMMAND_NONE`。
+
+如果找到该command，则将其占用的channel和window释放出来，并从相应的队列中移除这个command，如果该command带有packet，则释放相应的packet。
+
+并为该peer的sent队列头的packet设置下次的超时时间。
+
+返回相应的command number。
+
+
 
 
 
@@ -229,9 +284,21 @@ enet_protocol_send_outgoing_commands (ENetHost * host, ENetEvent * event, int ch
 
 
 
-> ❓ 问题：<br>
-> 2. command中incomingBandwidth和outgoingBandwidth的含义？<br>
-> 3. peer和host怎么处理queue中的command的<br>
-> 4. peer -> packetThrottleCounter<br>
-> 5. host中的buffer和command的作用<br>
-> 6. 压缩算法是怎么压缩的<br>
+❓ 问题：
+
+2. command中incomingBandwidth和outgoingBandwidth的含义？
+
+3. peer和host怎么处理queue中的command的
+
+4. peer -> packetThrottleCounter
+
+5. host中的buffer和command的作用
+
+6. 压缩算法是怎么压缩的
+
+
+7. package的reference count是干什么用的？
+
+有时一个要发送的packet的数据量比较大，会将该packet分到多个command中发送出去，每个command回将该package的reference count增加1。
+
+8. windows的机制还不是很了解

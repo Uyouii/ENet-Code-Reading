@@ -58,14 +58,17 @@ enet_peer_throttle_configure (ENetPeer * peer, enet_uint32 interval, enet_uint32
     enet_peer_queue_outgoing_command (peer, & command, NULL, 0, 0);
 }
 
+//调节peer->packetThrottle
 int
-enet_peer_throttle (ENetPeer * peer, enet_uint32 rtt)
+enet_peer_throttle (ENetPeer * peer, enet_uint32 rtt)	//roundtriptime
 {
+	//上次传输的速度非常快
     if (peer -> lastRoundTripTime <= peer -> lastRoundTripTimeVariance)
     {
         peer -> packetThrottle = peer -> packetThrottleLimit;
     }
     else
+	//这次传输的速度比上次的快
     if (rtt < peer -> lastRoundTripTime)
     {
         peer -> packetThrottle += peer -> packetThrottleAcceleration;
@@ -76,6 +79,7 @@ enet_peer_throttle (ENetPeer * peer, enet_uint32 rtt)
         return 1;
     }
     else
+	//这次传输的比较慢
     if (rtt > peer -> lastRoundTripTime + 2 * peer -> lastRoundTripTimeVariance)
     {
         if (peer -> packetThrottle > peer -> packetThrottleDeceleration)
@@ -139,11 +143,9 @@ enet_peer_send (ENetPeer * peer, enet_uint8 channelID, ENetPacket * packet)
         
       enet_list_clear (& fragments);
 
-      for (fragmentNumber = 0,
-             fragmentOffset = 0;
+      for (fragmentNumber = 0, fragmentOffset = 0;
            fragmentOffset < packet -> dataLength;
-           ++ fragmentNumber,
-             fragmentOffset += fragmentLength)
+           ++ fragmentNumber, fragmentOffset += fragmentLength)
       {
          if (packet -> dataLength - fragmentOffset < fragmentLength)
            fragmentLength = packet -> dataLength - fragmentOffset;
@@ -835,6 +837,7 @@ enet_peer_queue_incoming_command (ENetPeer * peer, const ENetProtocol * command,
     if (peer -> state == ENET_PEER_STATE_DISCONNECT_LATER)
       goto discardCommand;
 
+	//滑动窗口协议，选择重传
     if ((command -> header.command & ENET_PROTOCOL_COMMAND_MASK) != ENET_PROTOCOL_COMMAND_SEND_UNSEQUENCED)
     {
         reliableSequenceNumber = command -> header.reliableSequenceNumber;
@@ -843,7 +846,7 @@ enet_peer_queue_incoming_command (ENetPeer * peer, const ENetProtocol * command,
 
         if (reliableSequenceNumber < channel -> incomingReliableSequenceNumber)
            reliableWindow += ENET_PEER_RELIABLE_WINDOWS;
-
+		//检测是否符合正在传输的window的范围
         if (reliableWindow < currentWindow || reliableWindow >= currentWindow + ENET_PEER_FREE_RELIABLE_WINDOWS - 1)
           goto discardCommand;
     }
@@ -852,9 +855,11 @@ enet_peer_queue_incoming_command (ENetPeer * peer, const ENetProtocol * command,
     {
     case ENET_PROTOCOL_COMMAND_SEND_FRAGMENT:
     case ENET_PROTOCOL_COMMAND_SEND_RELIABLE:
+	   
        if (reliableSequenceNumber == channel -> incomingReliableSequenceNumber)
          goto discardCommand;
        
+	   //找到插入该command的位置，类似于滑动窗口
        for (currentCommand = enet_list_previous (enet_list_end (& channel -> incomingReliableCommands));
             currentCommand != enet_list_end (& channel -> incomingReliableCommands);
             currentCommand = enet_list_previous (currentCommand))
