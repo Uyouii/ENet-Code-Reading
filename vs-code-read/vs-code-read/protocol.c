@@ -293,7 +293,9 @@ enet_protocol_remove_sent_reliable_command (ENetPeer * peer, enet_uint16 reliabl
     return commandNumber;
 } 
 
-//处理连接请求，如果连接成功则将连接确认的command移动到outgoing队列
+//为host初始化一个peer
+//处理连接请求，如果连接成功则将连接确认的command（verify command）移动到outgoing队列
+//为host创建一个新的peer对象处理该连接
 static ENetPeer *
 enet_protocol_handle_connect (ENetHost * host, ENetProtocolHeader * header, ENetProtocol * command)
 {
@@ -565,10 +567,10 @@ enet_protocol_handle_send_fragment (ENetHost * host, ENetPeer * peer, const ENet
     startSequenceNumber = ENET_NET_TO_HOST_16 (command -> sendFragment.startSequenceNumber);
     startWindow = startSequenceNumber / ENET_PEER_RELIABLE_WINDOW_SIZE;
     currentWindow = channel -> incomingReliableSequenceNumber / ENET_PEER_RELIABLE_WINDOW_SIZE;
-
+	//到底是什么操作= =？
     if (startSequenceNumber < channel -> incomingReliableSequenceNumber)
       startWindow += ENET_PEER_RELIABLE_WINDOWS;
-
+	//超出了滑动窗口的范围
     if (startWindow < currentWindow || startWindow >= currentWindow + ENET_PEER_FREE_RELIABLE_WINDOWS - 1)
       return 0;
 
@@ -584,6 +586,7 @@ enet_protocol_handle_send_fragment (ENetHost * host, ENetPeer * peer, const ENet
         fragmentLength > totalLength - fragmentOffset)
       return -1;
  
+	//首先去incomingReliableCommands中寻找stratCommand
     for (currentCommand = enet_list_previous (enet_list_end (& channel -> incomingReliableCommands));
          currentCommand != enet_list_end (& channel -> incomingReliableCommands);
          currentCommand = enet_list_previous (currentCommand))
@@ -608,7 +611,7 @@ enet_protocol_handle_send_fragment (ENetHost * host, ENetPeer * peer, const ENet
               totalLength != incomingCommand -> packet -> dataLength ||
               fragmentCount != incomingCommand -> fragmentCount)
             return -1;
-
+		  //找到了
           startCommand = incomingCommand;
           break;
        }
@@ -625,6 +628,7 @@ enet_protocol_handle_send_fragment (ENetHost * host, ENetPeer * peer, const ENet
          return -1;
     }
     
+	//这里把所有的数据都集中到一个command上了
     if ((startCommand -> fragments [fragmentNumber / 32] & (1 << (fragmentNumber % 32))) == 0)
     {
        -- startCommand -> fragmentsRemaining;
@@ -638,6 +642,7 @@ enet_protocol_handle_send_fragment (ENetHost * host, ENetPeer * peer, const ENet
                (enet_uint8 *) command + sizeof (ENetProtocolSendFragment),
                fragmentLength);
 
+	   //等到所有的fragment都到了才dispatch
         if (startCommand -> fragmentsRemaining <= 0)
           enet_peer_dispatch_incoming_reliable_commands (peer, channel);
     }
@@ -683,7 +688,7 @@ enet_protocol_handle_send_unreliable_fragment (ENetHost * host, ENetPeer * peer,
 
     if (reliableWindow < currentWindow || reliableWindow >= currentWindow + ENET_PEER_FREE_RELIABLE_WINDOWS - 1)
       return 0;
-
+	//如果序号较大的包已经收到
     if (reliableSequenceNumber == channel -> incomingReliableSequenceNumber &&
         startSequenceNumber <= channel -> incomingUnreliableSequenceNumber)
       return 0;
@@ -700,6 +705,7 @@ enet_protocol_handle_send_unreliable_fragment (ENetHost * host, ENetPeer * peer,
         fragmentLength > totalLength - fragmentOffset)
       return -1;
 
+	//在列表中寻找stratCommand
     for (currentCommand = enet_list_previous (enet_list_end (& channel -> incomingUnreliableCommands));
          currentCommand != enet_list_end (& channel -> incomingUnreliableCommands);
          currentCommand = enet_list_previous (currentCommand))
@@ -863,9 +869,9 @@ enet_protocol_handle_acknowledge (ENetHost * host, ENetEvent * event, ENetPeer *
 
     receivedSentTime = ENET_NET_TO_HOST_16 (command -> acknowledge.receivedSentTime);
     receivedSentTime |= host -> serviceTime & 0xFFFF0000;
-    if ((receivedSentTime & 0x8000) > (host -> serviceTime & 0x8000))	//？
+    if ((receivedSentTime & 0x8000) > (host -> serviceTime & 0x8000))	//
         receivedSentTime -= 0x10000;
-	
+	//时间超过限制
     if (ENET_TIME_LESS (host -> serviceTime, receivedSentTime))
       return 0;
 
@@ -940,6 +946,8 @@ enet_protocol_handle_acknowledge (ENetHost * host, ENetEvent * event, ENetPeer *
     return 0;
 }
 
+//收到确认连接的command
+//确认连接建立，确认重新分配带宽
 static int
 enet_protocol_handle_verify_connect (ENetHost * host, ENetEvent * event, ENetPeer * peer, const ENetProtocol * command)
 {
@@ -1192,6 +1200,7 @@ enet_protocol_handle_incoming_commands (ENetHost * host, ENetEvent * event)
           goto commandError;
        }
 
+	   //如果该command需要发送确认请求并且该peer的状态没有断开，则将该command放在acknowledge中
        if (peer != NULL &&
            (command -> header.command & ENET_PROTOCOL_COMMAND_FLAG_ACKNOWLEDGE) != 0)
        {
@@ -1381,12 +1390,14 @@ enet_protocol_send_unreliable_outgoing_commands (ENetHost * host, ENetPeer * pee
 
        currentCommand = enet_list_next (currentCommand);
 
-	   //删除一些command？
+	   //根据throttle概率丢掉一些unreliable command，throttle受网络状况的影响。
        if (outgoingCommand -> packet != NULL && outgoingCommand -> fragmentOffset == 0)
        {
           peer -> packetThrottleCounter += ENET_PEER_PACKET_THROTTLE_COUNTER;
           peer -> packetThrottleCounter %= ENET_PEER_PACKET_THROTTLE_SCALE;
           
+		  //如果符合条件则丢掉这个command
+		  //如果packetThrottle等于ENET_PEER_PACKET_THROTTLE_SCALE，则一定不会丢掉
           if (peer -> packetThrottleCounter > peer -> packetThrottle)
           {
              enet_uint16 reliableSequenceNumber = outgoingCommand -> reliableSequenceNumber,
@@ -1549,7 +1560,7 @@ enet_protocol_send_reliable_outgoing_commands (ENetHost * host, ENetPeer * peer)
        reliableWindow = outgoingCommand -> reliableSequenceNumber / ENET_PEER_RELIABLE_WINDOW_SIZE;
        if (channel != NULL)
        {
-		   //？
+		   //你又在刁难我胖虎= =
            if (! windowWrap &&      
                outgoingCommand -> sendAttempts < 1 && 
                ! (outgoingCommand -> reliableSequenceNumber % ENET_PEER_RELIABLE_WINDOW_SIZE) &&
@@ -1807,7 +1818,7 @@ enet_protocol_send_outgoing_commands (ENetHost * host, ENetEvent * event, int ch
         {
             host -> buffers [1].data = host -> packetData [1];
             host -> buffers [1].dataLength = shouldCompress;
-            host -> bufferCount = 2;
+            host -> bufferCount = 2; //更新了buffer count
         }
 
         currentPeer -> lastSendTime = host -> serviceTime;

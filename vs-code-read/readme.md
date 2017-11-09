@@ -175,7 +175,7 @@ static int
 enet_protocol_send_reliable_outgoing_commands (ENetHost * host, ENetPeer * peer)
 ```
 
-文件位置：`protocol.c`
+文件：`protocol.c`
 
 向peer发送`peer->outgoingReliableCommands`中的command。
 
@@ -191,13 +191,14 @@ static void
 enet_protocol_send_unreliable_outgoing_commands (ENetHost * host, ENetPeer * peer)
 ```
 
-文件位置：`protocol.c`
+文件：`protocol.c`
 
 向peer发送`peer -> outgoingUnreliableCommands`中的command。
 
 如果发送的数据没有超过发送窗口的大小的限制或者host的commands和buffer没有超过限制，则将该command从放置到host的command和buffer中。如果该command带有packet，则将该command转移到sent队列中，否则直接释放该command。
 
->❓ 发送前的一些排除操作不是很理解。
+在发送前会根据`peer->packetthrottle`的大小概率性的丢掉一些unreliable command。如果`packetThrottle`等于`ENET_PEER_PACKET_THROTTLE_SCALE`，则一定不会丢掉。
+如果`packetThrottle`大小为0，则将unrelibale的command全部丢掉。
 
 ## 发送outgoing command
 
@@ -207,7 +208,7 @@ static int
 enet_protocol_send_outgoing_commands (ENetHost * host, ENetEvent * event, int checkForTimeouts)
 ```
 
-文件位置：`procotol.c`
+文件：`procotol.c`
 
 循环将与host相连的所有peer中的outgoing command发送出去，包括reliable command和unreliable command。
 
@@ -222,6 +223,48 @@ enet_protocol_send_outgoing_commands (ENetHost * host, ENetEvent * event, int ch
 
  随后在host的buffer[0]的位置设置发送的header和校验和，并检测要发送的buffer中的数据是否有压缩的空间，如果有压缩的空间则进行压缩后再发送。随后将本次循环中hostbuffer中的数据发送出去，更新host的totalsentdata和totalsentpackets。
 
+
+
+## 处理incoming command
+
+函数：
+```c
+static int
+enet_protocol_handle_incoming_commands (ENetHost * host, ENetEvent * event)
+```
+
+文件：`protocol.c`
+
+首先验证peer是否已经断开连接或者准备断开连接，或者地址和peerID信息是否匹配。如果断开连接或者信息不匹配这返回0。
+
+如果收到的数据之前被压缩过，则进行解压缩操作。
+
+遍历`receiveData`中的每个命令根据其commandNumber进行分类处理。
+
+如果该command是需要确认的请求(`ENET_PROTOCOL_COMMAND_FLAG_ACKNOWLEDGE`)并且该peer的状态没有断开，则将该command放在host的`acknowledge`中。
+
+## 确认接收realiable command
+
+函数：
+```c
+static ENetProtocolCommand
+enet_protocol_remove_sent_reliable_command (ENetPeer * peer, enet_uint16 reliableSequenceNumber, enet_uint8 channelID)
+```
+
+文件：`protocol.c`
+
+从sentReliableCommands队列中确认之前发送的command。
+
+首先遍历该peer的`sentReliableCommands`，如果没有找到相应的command，则遍历该peer的`outgoingReliableCommands`(有可能之前发送该command超时后将该command从sent队列转移回了outgoing队列。
+
+如果没有找到该command则返回`ENET_PROTOCOL_COMMAND_NONE`。
+
+如果找到该command，则将其占用的channel和window释放出来，并从相应的队列中移除这个command，如果该command带有packet，则释放相应的packet。
+
+并为该peer的sent队列头的packet设置下次的超时时间。
+
+返回相应的command number。
+
 ## 根据roundtriptime调节peer throttle
 
 函数：
@@ -230,9 +273,9 @@ int
 enet_peer_throttle (ENetPeer * peer, enet_uint32 rtt)
 ```
 
-文件位置：`peer.c`
+文件：`peer.c`
 
-rtt为这次packet的roundtriptime。
+rtt为这次packet的roundtriptime，packet throttle是用来调节发送时buffer的windowSize的。
 
 如果上次的传输时间非常短
 ```c
@@ -252,27 +295,50 @@ rtt > peer -> lastRoundTripTime + 2 * peer -> lastRoundTripTimeVariance
 ```
 则将`peer -> packetThrottle`减少响应的值(`peer -> packetThrottleDeceleration`)
 
-## 确认接收realiable command
+
+## 处理acknowledge
 
 函数：
 ```c
-static ENetProtocolCommand
-enet_protocol_remove_sent_reliable_command (ENetPeer * peer, enet_uint16 reliableSequenceNumber, enet_uint8 channelID)
+static int
+enet_protocol_handle_acknowledge (ENetHost * host, ENetEvent * event, ENetPeer * peer, const ENetProtocol * command)
 ```
 
-文件位置：`protocol.c`
+处理连接确认的请求。
 
-从sentReliableCommands队列中确认之前发送的command。
+如果peer的状态时断开连接或者准备断开连接，或者command的时间超过限制则不处理。
 
-首先遍历该peer的`sentReliableCommands`，如果没有找到相应的command，则遍历该peer的`outgoingReliableCommands`(有可能之前发送该command超时后将该command从sent队列转移回了outgoing队列。
+根据该command的roundtriptime调节peer的`packetThrottle`，`roundTripTime`和`roundTripTimeVariance`。
 
-如果没有找到该command则返回`ENET_PROTOCOL_COMMAND_NONE`。
+如果之前进行过流量控制或者流量控制的时间间隔超过一定的时间(`peer -> packetThrottleInterval`)，则进行peer的roundtirptime相关设置。
 
-如果找到该command，则将其占用的channel和window释放出来，并从相应的队列中移除这个command，如果该command带有packet，则释放相应的packet。
+从peer的`sentReliableCommands`队列中根据`receivedReliableSequenceNumber`移除该command。
 
-并为该peer的sent队列头的packet设置下次的超时时间。
+如果时确认连接或者确认断开连接的command，则进行相应的peer添加和删除操作。
 
-返回相应的command number。
+## queue incoming command
+
+函数：
+```c
+ENetIncomingCommand *
+enet_peer_queue_incoming_command (ENetPeer * peer, const ENetProtocol * command, const void * data, size_t dataLength, enet_uint32 flags, enet_uint32 fragmentCount)
+```
+
+
+
+## 处理fragement
+
+函数：
+```c
+static int
+enet_protocol_handle_send_fragment (ENetHost * host, ENetPeer * peer, const ENetProtocol * command, enet_uint8 ** currentData)
+```
+
+
+
+
+
+
 
 
 
@@ -291,6 +357,7 @@ enet_protocol_remove_sent_reliable_command (ENetPeer * peer, enet_uint16 reliabl
 3. peer和host怎么处理queue中的command的
 
 4. peer -> packetThrottleCounter
+根据throttle的大小按概率直接丢掉一些unreliable command
 
 5. host中的buffer和command的作用
 

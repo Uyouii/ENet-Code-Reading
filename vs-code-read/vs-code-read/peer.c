@@ -716,6 +716,7 @@ enet_peer_dispatch_incoming_unreliable_commands (ENetPeer * peer, ENetChannel * 
 
        if (incomingCommand -> reliableSequenceNumber == channel -> incomingReliableSequenceNumber)
        {
+		   //只要Remaining <= 0 就dispatch
           if (incomingCommand -> fragmentsRemaining <= 0)
           {
              channel -> incomingUnreliableSequenceNumber = incomingCommand -> unreliableSequenceNumber;
@@ -793,22 +794,23 @@ enet_peer_dispatch_incoming_reliable_commands (ENetPeer * peer, ENetChannel * ch
          currentCommand = enet_list_next (currentCommand))
     {
        ENetIncomingCommand * incomingCommand = (ENetIncomingCommand *) currentCommand;
-         
+       
+	   //如果fragement还有剩余或者序号不对就跳出
        if (incomingCommand -> fragmentsRemaining > 0 ||
            incomingCommand -> reliableSequenceNumber != (enet_uint16) (channel -> incomingReliableSequenceNumber + 1))
          break;
 
        channel -> incomingReliableSequenceNumber = incomingCommand -> reliableSequenceNumber;
-
+	   //将fragement的序号加上
        if (incomingCommand -> fragmentCount > 0)
          channel -> incomingReliableSequenceNumber += incomingCommand -> fragmentCount - 1;
     } 
 
     if (currentCommand == enet_list_begin (& channel -> incomingReliableCommands))
       return;
-
+	//重置unrelibalesequencenumber
     channel -> incomingUnreliableSequenceNumber = 0;
-
+	//移动到dispatch队列
     enet_list_move (enet_list_end (& peer -> dispatchedCommands), enet_list_begin (& channel -> incomingReliableCommands), enet_list_previous (currentCommand));
 
     if (! peer -> needsDispatch)
@@ -859,13 +861,13 @@ enet_peer_queue_incoming_command (ENetPeer * peer, const ENetProtocol * command,
        if (reliableSequenceNumber == channel -> incomingReliableSequenceNumber)
          goto discardCommand;
        
-	   //找到插入该command的位置，类似于滑动窗口
        for (currentCommand = enet_list_previous (enet_list_end (& channel -> incomingReliableCommands));
             currentCommand != enet_list_end (& channel -> incomingReliableCommands);
             currentCommand = enet_list_previous (currentCommand))
        {
           incomingCommand = (ENetIncomingCommand *) currentCommand;
-
+		  
+		  //喵喵喵？？？你这是在刁难我胖虎= =
           if (reliableSequenceNumber >= channel -> incomingReliableSequenceNumber)
           {
              if (incomingCommand -> reliableSequenceNumber < channel -> incomingReliableSequenceNumber)
@@ -874,7 +876,8 @@ enet_peer_queue_incoming_command (ENetPeer * peer, const ENetProtocol * command,
           else
           if (incomingCommand -> reliableSequenceNumber >= channel -> incomingReliableSequenceNumber)
             break;
-
+		  
+		  //找到把command插入到合适的位置
           if (incomingCommand -> reliableSequenceNumber <= reliableSequenceNumber)
           {
              if (incomingCommand -> reliableSequenceNumber < reliableSequenceNumber)
@@ -888,7 +891,7 @@ enet_peer_queue_incoming_command (ENetPeer * peer, const ENetProtocol * command,
     case ENET_PROTOCOL_COMMAND_SEND_UNRELIABLE:
     case ENET_PROTOCOL_COMMAND_SEND_UNRELIABLE_FRAGMENT:
        unreliableSequenceNumber = ENET_NET_TO_HOST_16 (command -> sendUnreliable.unreliableSequenceNumber);
-
+	   //如果序号大的已经到了，就丢掉
        if (reliableSequenceNumber == channel -> incomingReliableSequenceNumber && 
            unreliableSequenceNumber <= channel -> incomingUnreliableSequenceNumber)
          goto discardCommand;
@@ -901,7 +904,7 @@ enet_peer_queue_incoming_command (ENetPeer * peer, const ENetProtocol * command,
 
           if ((command -> header.command & ENET_PROTOCOL_COMMAND_MASK) == ENET_PROTOCOL_COMMAND_SEND_UNSEQUENCED)
             continue;
-
+		  //？？？？？
           if (reliableSequenceNumber >= channel -> incomingReliableSequenceNumber)
           {
              if (incomingCommand -> reliableSequenceNumber < channel -> incomingReliableSequenceNumber)
@@ -911,6 +914,7 @@ enet_peer_queue_incoming_command (ENetPeer * peer, const ENetProtocol * command,
           if (incomingCommand -> reliableSequenceNumber >= channel -> incomingReliableSequenceNumber)
             break;
 
+		  //找到第一个比它realiable Number小的
           if (incomingCommand -> reliableSequenceNumber < reliableSequenceNumber)
             break;
 
@@ -919,9 +923,10 @@ enet_peer_queue_incoming_command (ENetPeer * peer, const ENetProtocol * command,
 
           if (incomingCommand -> unreliableSequenceNumber <= unreliableSequenceNumber)
           {
+			 //相等的时候找到第一个unreliableSequenceNumber比它小的
              if (incomingCommand -> unreliableSequenceNumber < unreliableSequenceNumber)
                break;
-
+			 //重复的丢掉
              goto discardCommand;
           }
        }
@@ -956,6 +961,7 @@ enet_peer_queue_incoming_command (ENetPeer * peer, const ENetProtocol * command,
     
     if (fragmentCount > 0)
     { 
+		//分配fragments用来记录已经到的fragment
        if (fragmentCount <= ENET_PROTOCOL_MAXIMUM_FRAGMENT_COUNT)
          incomingCommand -> fragments = (enet_uint32 *) enet_malloc ((fragmentCount + 31) / 32 * sizeof (enet_uint32));
        if (incomingCommand -> fragments == NULL)
