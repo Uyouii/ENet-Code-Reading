@@ -89,7 +89,7 @@ enet_protocol_dispatch_incoming_commands (ENetHost * host, ENetEvent * event)
            return 1;
        //如果peer的状态为无响应，则事件类型为断开连接，并将peer重置
        case ENET_PEER_STATE_ZOMBIE:
-           host -> recalculateBandwidthLimits = 1; //？
+           host -> recalculateBandwidthLimits = 1; //需要重新计算带宽，将该peer断开连接重置
 
            event -> type = ENET_EVENT_TYPE_DISCONNECT;
            event -> peer = peer;
@@ -111,11 +111,11 @@ enet_protocol_dispatch_incoming_commands (ENetHost * host, ENetEvent * event)
            event -> type = ENET_EVENT_TYPE_RECEIVE;
            event -> peer = peer;
 
-		   //如果还有需要处理的数据包，则将该peer插入host处理队列的尾部，并将peer->needsDispatch置为1
+		   //如果还有需要处理的command，则将该peer插入host处理队列的尾部，并将peer->needsDispatch置为1
            if (! enet_list_empty (& peer -> dispatchedCommands))
            {
               peer -> needsDispatch = 1;
-         
+			  //把该peer加入到host的处理队列中
               enet_list_insert (enet_list_end (& host -> dispatchQueue), & peer -> dispatchList);
            }
 
@@ -1502,7 +1502,7 @@ enet_protocol_check_timeouts (ENetHost * host, ENetPeer * peer, ENetEvent * even
                  ENET_TIME_DIFFERENCE (host -> serviceTime, peer -> earliestTimeout) >= peer -> timeoutMinimum)))
        {
 		  //设置断开连接事件
-		   //一个peer断开连接后需要重新计算带宽
+		  //一个peer断开连接后需要重新计算带宽
           enet_protocol_notify_disconnect (host, peer, event);
 
           return 1;
@@ -1923,7 +1923,6 @@ enet_host_service (ENetHost * host, ENetEvent * event, enet_uint32 timeout)
     do
     {
 	   //距离上次做流量控制经过的时间大于1秒，则进行流量控制
-		//host -> recalculateBandwidthLimits？
        if (ENET_TIME_DIFFERENCE (host -> serviceTime, host -> bandwidthThrottleEpoch) >= ENET_HOST_BANDWIDTH_THROTTLE_INTERVAL)
          enet_host_bandwidth_throttle (host);
 
@@ -1960,7 +1959,7 @@ enet_host_service (ENetHost * host, ENetEvent * event, enet_uint32 timeout)
        default:
           break;
        }
-
+	   //刚才接收command后将需要发送的ack发送出去
        switch (enet_protocol_send_outgoing_commands (host, event, 1))
        {
        case 1:
@@ -1995,7 +1994,7 @@ enet_host_service (ENetHost * host, ENetEvent * event, enet_uint32 timeout)
              break;
           }
        }
-
+	   //如果超时了没有任何事件产生，则返回
        if (ENET_TIME_GREATER_EQUAL (host -> serviceTime, timeout))
          return 0;
 
@@ -2008,6 +2007,7 @@ enet_host_service (ENetHost * host, ENetEvent * event, enet_uint32 timeout)
 
           waitCondition = ENET_SOCKET_WAIT_RECEIVE | ENET_SOCKET_WAIT_INTERRUPT;
 
+		  //检测该socket是否仍符合可读可写的条件或者有无发生错误
           if (enet_socket_wait (host -> socket, & waitCondition, ENET_TIME_DIFFERENCE (timeout, host -> serviceTime)) != 0)
             return -1;
        }

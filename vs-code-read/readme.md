@@ -324,7 +324,22 @@ ENetIncomingCommand *
 enet_peer_queue_incoming_command (ENetPeer * peer, const ENetProtocol * command, const void * data, size_t dataLength, enet_uint32 flags, enet_uint32 fragmentCount)
 ```
 
+文件：`peer.c`
 
+如果是fragement的命令，无论是reliable command还是unreliable command，传入的只是这些fragements的start command。
+
+如果是reliable command，如果有重复的就丢掉。如果其所在window范围不超过滑动窗口的传输范围，则在channel的`incomingReliableCommands`队列中找到合适的位置将其插入。
+
+❓ 有个排除操作没有看懂。
+
+unrelibale 都会携带一个reliable sequence number，用来标记该unreliable command相对于relibale command的位置。
+
+如果该unreliable前的reliable command已经到达，并且如果序号较大的unrelibale command已经到了，则舍弃该unreliable command，如果序号重复的command，也舍弃掉。
+否则在`incomingUnreliableCommands`中找到合适的位置将该command插入。
+
+如果是fragements的strat command，则为其创建一个fragements的成员变量，用位图的方法记录其fragements的到达的情况。
+
+随后将incoming commands dispatch到dispatched command中。
 
 ## 处理fragement
 
@@ -333,6 +348,26 @@ enet_peer_queue_incoming_command (ENetPeer * peer, const ENetProtocol * command,
 static int
 enet_protocol_handle_send_fragment (ENetHost * host, ENetPeer * peer, const ENetProtocol * command, enet_uint8 ** currentData)
 ```
+
+文件：`protocol.c`
+
+首先根据其stratcommand number在incomingReliableCommands中寻找其startcommand。如果找到的话则将其返回，否则将该command的sequence number设置为start command，并调用`enet_peer_queue_incoming_command`将其插入到`incomingReliableCommands`中。
+
+随后将属于fragements中的数据集中到start command中。等到没有fragement剩余后，调用`enet_peer_dispatch_incoming_reliable_commands`将其dispatch到dispatched command中。
+
+## 处理unreliable fragement
+
+函数：
+```c
+static int
+enet_protocol_handle_send_unreliable_fragment (ENetHost * host, ENetPeer * peer, const ENetProtocol * command, enet_uint8 ** currentData)
+```
+
+文件：`protocol.c`
+
+过程与`enet_protocol_handle_send_fragment`类似，会额外排除掉一些可以丢弃的unreliable command。
+
+
 
 
 
@@ -352,20 +387,24 @@ enet_protocol_handle_send_fragment (ENetHost * host, ENetPeer * peer, const ENet
 
 ❓ 问题：
 
-2. command中incomingBandwidth和outgoingBandwidth的含义？
+> 2. command中incomingBandwidth和outgoingBandwidth的含义？
 
-3. peer和host怎么处理queue中的command的
+> 3. peer和host怎么处理queue中的command的 ？
 
-4. peer -> packetThrottleCounter
+host发送命令时首先会把命令放到outgoingcommands队列中，每次发送时会将outgoingcommands队列中的各个命令取出放到buffer中，直到buffer放满或者command没有剩余，随后将buffer中的数据压缩后发送给peer(发送调用的时操作系统的socket接口)。对于需要ack的command，会将该command存到sentcommand队列中，当收到ack时会用sequence number和set队列中的command进行对比，将sent队列中的相应的command删除。host会定期检查sent队列中的command有没有超时，如果超时先检测peer有没有断开，如果peer已经断开，则重置peer，如果没有断开，则重发该command，将该command从sent队列取出放回到outgoing command中。
+
+每当host收到一个command时，会将该command放到host的incomingcommands队列中，对于reliable command，则等待相应顺序的command都到达后将该command移动到dispatched commands队列中。当检测到host的dispatchQueue没有被占用后，将该peer push到host的dispatchQueue中，随后在host service中处理dispatchQueue中相应的内容。
+
+> 4. peer -> packetThrottleCounter
+
 根据throttle的大小按概率直接丢掉一些unreliable command
 
-5. host中的buffer和command的作用
+> 5. host中的buffer和command的作用
+buffer是用来发送数据的储存空间，每次host将buffer存满后就将buffer中的数据压缩后发送到该peer。
 
-6. 压缩算法是怎么压缩的
+> 6. 压缩算法是怎么压缩的
 
 
-7. package的reference count是干什么用的？
+> 7. packet的reference count是干什么用的？
 
-有时一个要发送的packet的数据量比较大，会将该packet分到多个command中发送出去，每个command回将该package的reference count增加1。
-
-8. windows的机制还不是很了解
+有时一个要发送的packet的数据量比较大，会将该packet分到多个command中发送出去，每个command会将该packet的reference count增加1，每处理一个command会将packet的reference count减一，当一个packet的reference count到0时则将该packet释放掉。

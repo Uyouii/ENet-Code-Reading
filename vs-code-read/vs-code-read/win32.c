@@ -1,4 +1,4 @@
-/** 
+﻿/** 
  @file  win32.c
  @brief ENet Win32 system specific functions
 */
@@ -398,7 +398,7 @@ enet_socket_wait (ENetSocket socket, enet_uint32 * condition, enet_uint32 timeou
 
     if (* condition & ENET_SOCKET_WAIT_RECEIVE)
       FD_SET (socket, & readSet);
-
+	//返回fd_set结构中准备好的(可读、可写或者发生错误)socket句柄的总个数。等待时间到则返回0，发生错误返回SOCKET_ERROR。
     selectCount = select (socket + 1, & readSet, & writeSet, NULL, & timeVal);
 
     if (selectCount < 0)

@@ -729,6 +729,7 @@ enet_peer_dispatch_incoming_unreliable_commands (ENetPeer * peer, ENetChannel * 
 
              if (! peer -> needsDispatch)
              {
+				//把peer加入到host的处理队列中
                 enet_list_insert (enet_list_end (& peer -> host -> dispatchQueue), & peer -> dispatchList);
 
                 peer -> needsDispatch = 1;
