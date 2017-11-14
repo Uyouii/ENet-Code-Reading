@@ -1,0 +1,11 @@
+﻿  main.cpp
+main.cpp(60): warning C4477: “printf”: 格式字符串“%s”需要类型“char *”的参数，但可变参数 3 拥有了类型“void *”
+main.cpp(71): warning C4477: “printf”: 格式字符串“%s”需要类型“char *”的参数，但可变参数 1 拥有了类型“void *”
+main.obj : error LNK2001: 无法解析的外部符号 _enet_initialize
+main.obj : error LNK2001: 无法解析的外部符号 _enet_host_service
+main.obj : error LNK2001: 无法解析的外部符号 _enet_address_set_host
+main.obj : error LNK2001: 无法解析的外部符号 _enet_deinitialize
+main.obj : error LNK2001: 无法解析的外部符号 _enet_host_destroy
+main.obj : error LNK2001: 无法解析的外部符号 _enet_packet_destroy
+main.obj : error LNK2001: 无法解析的外部符号 _enet_host_create
+E:\projects\ENet-Code-Reading\EnetServer\Release\EnetServer.exe : fatal error LNK1120: 7 个无法解析的外部命令

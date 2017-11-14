@@ -306,7 +306,7 @@ typedef struct _ENetPeer
    ENetList      sentUnreliableCommands;
    ENetList      outgoingReliableCommands;
    ENetList      outgoingUnreliableCommands;
-   ENetList      dispatchedCommands;
+   ENetList      dispatchedCommands;	//根本没有用到= =
    int           needsDispatch;
    enet_uint16   incomingUnsequencedGroup;
    enet_uint16   outgoingUnsequencedGroup;

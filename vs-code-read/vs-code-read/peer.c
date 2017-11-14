@@ -100,6 +100,7 @@ enet_peer_throttle (ENetPeer * peer, enet_uint32 rtt)	//roundtriptime
     @retval 0 on success
     @retval < 0 on failure
 */
+//用fragement发送peer
 int
 enet_peer_send (ENetPeer * peer, enet_uint8 channelID, ENetPacket * packet)
 {
@@ -632,6 +633,7 @@ enet_peer_setup_outgoing_command (ENetPeer * peer, ENetOutgoingCommand * outgoin
     else
     if (outgoingCommand -> command.header.command & ENET_PROTOCOL_COMMAND_FLAG_ACKNOWLEDGE)
     {
+	   //在这里递增outgoingReliableSequenceNumber
        ++ channel -> outgoingReliableSequenceNumber;
        channel -> outgoingUnreliableSequenceNumber = 0;
 
@@ -868,7 +870,7 @@ enet_peer_queue_incoming_command (ENetPeer * peer, const ENetProtocol * command,
        {
           incomingCommand = (ENetIncomingCommand *) currentCommand;
 		  
-		  //喵喵喵？？？你这是在刁难我胖虎= =
+		  //可能会序号重用，所以要判断是否是已经从0开始
           if (reliableSequenceNumber >= channel -> incomingReliableSequenceNumber)
           {
              if (incomingCommand -> reliableSequenceNumber < channel -> incomingReliableSequenceNumber)

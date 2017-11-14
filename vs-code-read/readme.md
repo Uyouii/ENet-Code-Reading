@@ -1,3 +1,86 @@
+
+# 过程总览
+
+## 各个队列的作用
+
+|队列|作用|
+|:---|:---|
+|`ENetPeer->outgoingReliableCommands`:      | 准备发送的reliable command|
+|`ENetPeer->outgoingUnreliableCommands`     | 准备发送的unreliable command|
+|`ENetPeer->acknowledgements`:              | 准备发送的ack|
+|`ENetPeer->sentReliableCommands`:          | 已经发送等待ack的reliable command|
+|`ENetPeer->sentUnreliableCommands`:        | 已经发送的unreliable command，不会等待ack|
+|`ENetPeer->dispatchedCommands`:            | 接收待处理的command|
+|`ENetChannel->incomingReliableCommands`:   | Channel中接收的reliable command|
+|`ENetChannel->incomingUnreliableCommands`: | Channel中接收的unreliable command|
+|`ENetHost->dispatchQueue`:                 | host中需要处理的peer队列|
+
+
+## 发送command
+
+所有待发送的command都会先将command push到peer的outgoingCommands中，随后将outgoing 中的command 存到host的buffer中调用socket接口发送。例如`ENET_PROTOCOL_COMMAND_CONNECT`，`ENET_PROTOCOL_COMMAND_DISCONNECT`，`ENET_PROTOCOL_COMMAND_ACKNOWLEDGE`等，但发送packet时则需要特殊处理。
+
+### queue packet
+
+用户调用enet_peer_send发送packet时，command Number可以选择为`ENET_PROTOCOL_COMMAND_SEND_RELIABLE`或者`ENET_PROTOCOL_COMMAND_SEND_UNRELIABLE`。对于长度超过限制的packcet则会将其拆分为多个command，选择`ENET_PROTOCOL_COMMAND_SEND_FRAGMENT`或者`ENET_PROTOCOL_COMMAND_SEND_UNRELIABLE_FRAGMENT`为command Number，对于所有的reliable的command都会需要接收方发送ack(除了一些peer的特定的状态，例如断开连接或者准备断开连接等)。
+
+packet大于mtu时会将packet拆分为多个fragement，每个fragement都作为一个command单独发送，还需记录其`startSequenceNumber`（command的开始序列号）,`dataLength`（该command的数据长度）,`fragmentCount`（总的fragement count）,`fragmentNumber`（当前fragement的序号）,`fragmentOffset`（数据在packet中的偏移量）,`totalLength`（总的数据长度）等。待发送的fragement都会作为command push到outgoing commands中。
+
+### 发送outgoing command
+
+采用轮询的方法依次遍历每个peer直到host buffer内容填满或者peer没有需要发送的command。host->buffer填满后调用socket将整个buffer发送到相应的peer。
+
+buffer的填充顺序是send acknowledgements，send reliable outgoing commands和send unreliable outgoing commands。
+
+在发送reliable command时会设置command的超时时间和peer的下次超时检测(nextTimeout)。
+
+### 超时检测
+
+遍历sent reliable commands检测等待时间是否超时。
+
+首先检测command是否超时
+```c
+if (ENET_TIME_DIFFERENCE (host -> serviceTime, outgoingCommand -> sentTime) < outgoingCommand -> roundTripTimeout)
+    continue;
+```
+
+如果peer距上次收到ack的超时时间超过时间限制，或者command的重发时间超过时间限制并且确定peer已经超时，则认为peer已经断开连接。
+```c
+ if (peer -> earliestTimeout != 0 &&
+             (ENET_TIME_DIFFERENCE (host -> serviceTime, peer -> earliestTimeout) >= peer -> timeoutMaximum ||
+               (outgoingCommand -> roundTripTimeout >= outgoingCommand -> roundTripTimeoutLimit &&
+                 ENET_TIME_DIFFERENCE (host -> serviceTime, peer -> earliestTimeout) >= peer -> timeoutMinimum)))
+       {
+          enet_protocol_notify_disconnect (host, peer, event);
+```
+
+否则则确认丢包，将该command从sent commands中取出重放在outgoingcommands下。
+
+将该command的超时时间增加一倍。
+```c
+ outgoingCommand -> roundTripTimeout *= 2;
+```
+
+
+ 
+
+
+
+### header
+
+buffer head(buffer[0])的数据有peerID，senttime和checksum。存放在buffer[0]中。
+
+数据从buffer[1]才真正开始储存。    
+
+<br>
+<br>
+<br>
+
+
+
+
+
+
 # 函数解析
 
 ## 创建host
@@ -66,7 +149,6 @@ for (peer = host -> peers;
 }
 ```
 
-
 计算throttle
 ```c
 //throttle = SCALE * bandwidth / (peer)dataTotal，最大是32
@@ -75,7 +157,7 @@ if (dataTotal <= bandwidth)
 else
     throttle = (bandwidth * ENET_PEER_PACKET_THROTTLE_SCALE) / dataTotal;
 ```
-这里计算throttle用的是host的outgoing bandwidth和peer的outgoing data Total，可以理解为 peer的outgoing data大部分要通过host传输，可以类似等价为host这段时间内需要发送的数据量，host的outgoing bandwidth是host全带宽发送数据的能力，throttle可以理解为所有peer的发送数据能力与发送数据量的商的平均水平。
+这里计算throttle用的是host的outgoing bandwidth和peer的outgoing data Total，throttle可以理解为所有peer的发送数据能力与发送数据量的商的平均水平。
 
 调节peer -> packetThrottleLimit 和 peer -> packetThrottle
 ```c
@@ -88,7 +170,7 @@ if ((peer -> state != ENET_PEER_STATE_CONNECTED &&
 peerBandwidth = (peer -> incomingBandwidth * elapsedTime) / 1000;	//peer在间隔时间内能接收的最大数据
 
 //如果 （in coming)peerBandwith / peer->outgoingDataTotal >= bandwith / (peer)dataTotal
-//如果此peer的接收数据的能力/发送数据量 大于平均水平时，则暂时不调节
+//如果此host发送数据的能力/peer接收的数据量 大于平均水平时，则暂时不调节
 if ((throttle * peer -> outgoingDataTotal) / ENET_PEER_PACKET_THROTTLE_SCALE <= peerBandwidth)
     continue;
 
@@ -368,43 +450,70 @@ enet_protocol_handle_send_unreliable_fragment (ENetHost * host, ENetPeer * peer,
 过程与`enet_protocol_handle_send_fragment`类似，会额外排除掉一些可以丢弃的unreliable command。
 
 
+## 发送packet
+
+函数：
+```c
+int
+enet_peer_send (ENetPeer * peer, enet_uint8 channelID, ENetPacket * packet)
+```
+
+文件：`peer.c`
+
+向peer发送一个packet，如果packet的大小超过command的mtu，则将packet分成数个fragement发送。
+
+根据packet的类型设置outgoing command的类型。
 
 
 
 
-
-
-
-
+<br>
 
 
 
 <br>
 <br>
 <br>
+<br>
 
 
 
-❓ 问题：
 
-> 2. command中incomingBandwidth和outgoingBandwidth的含义？
 
-> 3. peer和host怎么处理queue中的command的 ？
+# 问题 ❓ ：
+
+> 1. command中incomingBandwidth和outgoingBandwidth的含义？
+
+command中的incomingBandwidth就是host的incomingBandwitdh，outgoingBandwidth就是host的outgoingBandwidth
+
+> 2. peer和host怎么处理queue中的command的 ？
 
 host发送命令时首先会把命令放到outgoingcommands队列中，每次发送时会将outgoingcommands队列中的各个命令取出放到buffer中，直到buffer放满或者command没有剩余，随后将buffer中的数据压缩后发送给peer(发送调用的时操作系统的socket接口)。对于需要ack的command，会将该command存到sentcommand队列中，当收到ack时会用sequence number和set队列中的command进行对比，将sent队列中的相应的command删除。host会定期检查sent队列中的command有没有超时，如果超时先检测peer有没有断开，如果peer已经断开，则重置peer，如果没有断开，则重发该command，将该command从sent队列取出放回到outgoing command中。
 
 每当host收到一个command时，会将该command放到host的incomingcommands队列中，对于reliable command，则等待相应顺序的command都到达后将该command移动到dispatched commands队列中。当检测到host的dispatchQueue没有被占用后，将该peer push到host的dispatchQueue中，随后在host service中处理dispatchQueue中相应的内容。
 
-> 4. peer -> packetThrottleCounter
+> 3. peer -> packetThrottleCounter
 
 根据throttle的大小按概率直接丢掉一些unreliable command
 
-> 5. host中的buffer和command的作用
+> 4. host中的buffer和command的作用
+
 buffer是用来发送数据的储存空间，每次host将buffer存满后就将buffer中的数据压缩后发送到该peer。
 
-> 6. 压缩算法是怎么压缩的
+> 5. 压缩算法是怎么压缩的
 
 
-> 7. packet的reference count是干什么用的？
+> 6. packet的reference count是干什么用的？
 
 有时一个要发送的packet的数据量比较大，会将该packet分到多个command中发送出去，每个command会将该packet的reference count增加1，每处理一个command会将packet的reference count减一，当一个packet的reference count到0时则将该packet释放掉。
+
+> 7. host和peer的状态的变化
+
+
+
+
+
+
+
+
+

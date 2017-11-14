@@ -172,6 +172,7 @@ enet_host_destroy (ENetHost * host)
     @remarks The peer returned will have not completed the connection until enet_host_service()
     notifies of an ENET_EVENT_TYPE_CONNECT event for the peer.
 */
+//初始化并发送连接的命令
 ENetPeer *
 enet_host_connect (ENetHost * host, const ENetAddress * address, size_t channelCount, enet_uint32 data)
 {
@@ -189,6 +190,7 @@ enet_host_connect (ENetHost * host, const ENetAddress * address, size_t channelC
          currentPeer < & host -> peers [host -> peerCount];
          ++ currentPeer)
     {
+	   //找到第一个可用的peer
        if (currentPeer -> state == ENET_PEER_STATE_DISCONNECTED)
          break;
     }
@@ -392,7 +394,7 @@ enet_host_bandwidth_throttle (ENetHost * host)
             peerBandwidth = (peer -> incomingBandwidth * elapsedTime) / 1000;	//peer在间隔时间内能接收的最大数据
 			
 			//如果 （in coming)peerBandwith / peer->outgoingDataTotal >= bandwith / (peer)dataTotal
-			//如果此peer的接收数据的能力/发送数据的量 大于平均水平时，则暂时不调节
+			//如果host发送数据的能力/peer接收的数据的量 大于平均水平时，则暂时不调节
             if ((throttle * peer -> outgoingDataTotal) / ENET_PEER_PACKET_THROTTLE_SCALE <= peerBandwidth)
               continue;
 

@@ -871,7 +871,7 @@ enet_protocol_handle_acknowledge (ENetHost * host, ENetEvent * event, ENetPeer *
     receivedSentTime |= host -> serviceTime & 0xFFFF0000;
     if ((receivedSentTime & 0x8000) > (host -> serviceTime & 0x8000))	//
         receivedSentTime -= 0x10000;
-	//时间超过限制
+
     if (ENET_TIME_LESS (host -> serviceTime, receivedSentTime))
       return 0;
 
@@ -1214,7 +1214,7 @@ enet_protocol_handle_incoming_commands (ENetHost * host, ENetEvent * event)
            switch (peer -> state)
            {
            case ENET_PEER_STATE_DISCONNECTING:
-           case ENET_PEER_STATE_ACKNOWLEDGING_CONNECT:
+           case ENET_PEER_STATE_ACKNOWLEDGING_CONNECT:	//不用发ack了
            case ENET_PEER_STATE_DISCONNECTED:
            case ENET_PEER_STATE_ZOMBIE:
               break;
@@ -1490,7 +1490,8 @@ enet_protocol_check_timeouts (ENetHost * host, ENetPeer * peer, ENetEvent * even
        if (ENET_TIME_DIFFERENCE (host -> serviceTime, outgoingCommand -> sentTime) < outgoingCommand -> roundTripTimeout)
          continue;
 
-	   //重置peer最早的超时的时间
+	   //设置peer距上次收到ack后的超时的时间
+	   //erliestTimeout在收到ack时会重置
        if (peer -> earliestTimeout == 0 ||
            ENET_TIME_LESS (outgoingCommand -> sentTime, peer -> earliestTimeout))
          peer -> earliestTimeout = outgoingCommand -> sentTime;
@@ -1523,7 +1524,6 @@ enet_protocol_check_timeouts (ENetHost * host, ENetPeer * peer, ENetEvent * even
            ! enet_list_empty (& peer -> sentReliableCommands))
        {
           outgoingCommand = (ENetOutgoingCommand *) currentCommand;
-		  //下次丢包的截至时间
           peer -> nextTimeout = outgoingCommand -> sentTime + outgoingCommand -> roundTripTimeout;
        }
     }

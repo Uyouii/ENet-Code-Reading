@@ -71,8 +71,8 @@ int main(int argc, char ** argv)
 
 	/* Create a reliable packet of size 7 containing "packet\0" */
 	ENetPacket * packet = enet_packet_create(
-		"packet",
-		strlen("packet") + 1,
+		"the packet",
+		strlen("the packet") + 1,
 		ENET_PACKET_FLAG_RELIABLE);
 
 	/* Send the packet to the peer over channel id 0. */

@@ -54,7 +54,8 @@ int main(int argc, char ** argv)
 				event.peer->address.host,
 				event.peer->address.port);
 			/* Store any relevant client information here. */
-			event.peer->data = "Client information";
+			event.peer->data = "client1";
+			printf("%d\n", event.peer->state);
 			break;
 		case ENET_EVENT_TYPE_RECEIVE:
 			printf("A packet of length %u containing %s was received from %s on channel %u.\n",
@@ -64,13 +65,14 @@ int main(int argc, char ** argv)
 				event.channelID);
 			/* Clean up the packet now that we're done using it. */
 			enet_packet_destroy(event.packet);
-
+			printf("%d\n", event.peer->state);
 			break;
 
 		case ENET_EVENT_TYPE_DISCONNECT:
 			printf("%s disconnected.\n", event.peer->data);
 			/* Reset the peer's client information. */
 			event.peer->data = NULL;
+			printf("%d\n", event.peer->state);
 			break;
 		}
 	}
