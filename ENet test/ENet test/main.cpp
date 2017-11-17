@@ -13,7 +13,7 @@ ENetHost* createServer() {
 
 	server = enet_host_create(
 		&address /* the address to bind the server host to */,
-		32      /* allow up to 32 clients and/or outgoing connections */,
+		4000      /* allow up to 32 clients and/or outgoing connections */,
 		2      /* allow up to 2 channels to be used, 0 and 1 */,
 		0      /* assume any amount of incoming bandwidth */,
 		0      /* assume any amount of outgoing bandwidth */
@@ -45,7 +45,7 @@ int main(int argc, char ** argv)
 
 	ENetEvent event;
 	/* Wait up to 1000 milliseconds for an event. */
-	while (enet_host_service(server, &event, 100) >= 0)
+	while (enet_host_service(server, &event, 1000) >= 0)
 	{
 		switch (event.type)
 		{
@@ -72,6 +72,7 @@ int main(int argc, char ** argv)
 			event.peer->data = NULL;
 			break;
 		}
+		printf("%d\n", server->connectedPeers);
 	}
 
 	enet_host_destroy(server);
