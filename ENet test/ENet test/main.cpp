@@ -43,9 +43,12 @@ int main(int argc, char ** argv)
 
 	ENetHost* server = createServer();
 
+	int packetReceive = 0;
+	int connectReceive = 0;
+
 	ENetEvent event;
 	/* Wait up to 1000 milliseconds for an event. */
-	while (enet_host_service(server, &event, 1000) >= 0)
+	while (enet_host_service(server, &event, 1000) >= -1)
 	{
 		switch (event.type)
 		{
@@ -55,6 +58,7 @@ int main(int argc, char ** argv)
 				event.peer->address.port);
 			/* Store any relevant client information here. */
 			event.peer->data = "client1";
+			connectReceive++;
 			break;
 		case ENET_EVENT_TYPE_RECEIVE:
 			printf("A packet of length %u containing %s was received from %s on channel %u.\n",
@@ -64,6 +68,7 @@ int main(int argc, char ** argv)
 				event.channelID);
 			/* Clean up the packet now that we're done using it. */
 			enet_packet_destroy(event.packet);
+			packetReceive++;
 			break;
 
 		case ENET_EVENT_TYPE_DISCONNECT:
@@ -72,11 +77,11 @@ int main(int argc, char ** argv)
 			event.peer->data = NULL;
 			break;
 		}
-		printf("%d\n", server->connectedPeers);
+		printf("connected: %d connectReceive: %d, packetReceive: %d \n", server->connectedPeers,connectReceive,packetReceive);
 	}
 
-	enet_host_destroy(server);
 
+	enet_host_destroy(server);
 
 	atexit(enet_deinitialize);
 	system("pause");

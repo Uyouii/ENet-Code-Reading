@@ -9,6 +9,8 @@
 #include "enet/time.h"
 #include "enet/enet.h"
 
+#define DEBUG
+
 static size_t commandSizes [ENET_PROTOCOL_COMMAND_COUNT] =
 {
     0,
@@ -1298,6 +1300,9 @@ enet_protocol_receive_incoming_commands (ENetHost * host, ENetEvent * event)
        default:
           break;
        }
+#ifdef DEBUG
+	   printf("receive %d\n", receivedLength);
+#endif
     }
 
     return -1;
